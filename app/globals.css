@@ -1,26 +1,383 @@
 @import "tailwindcss";
 
+/* ============================================================
+   ARIA DESIGN SYSTEM — CSS Custom Properties
+   Theme: Botanical Sanctuary Voice Interface
+   Dark-first with light toggle, class-based switching.
+   ============================================================ */
+
+/* --- Dark theme (default) --- */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+
+  /* Canvas & surfaces */
+  --color-canvas: 10 22 16;             /* #0a1610 — deep forest void */
+  --color-surface-lowest: 5 17 11;      /* #05110b */
+  --color-surface-low: 18 30 24;        /* #121e18 */
+  --color-surface: 22 34 28;            /* #16221c */
+  --color-surface-high: 32 45 38;       /* #202d26 */
+  --color-surface-highest: 43 56 48;    /* #2b3830 */
+  --color-surface-bright: 47 60 53;     /* #2f3c35 */
+
+  /* Text */
+  --color-on-surface: 216 230 219;      /* #d8e6db */
+  --color-on-surface-variant: 208 197 175; /* #d0c5af — warm parchment */
+  --color-on-surface-muted: 158 171 162; /* #9eaba2 — muted sage */
+
+  /* Primary — Champagne Gold */
+  --color-primary: 212 175 55;          /* #d4af37 */
+  --color-primary-light: 242 202 80;    /* #f2ca50 */
+  --color-primary-dim: 233 195 73;      /* #e9c349 */
+  --color-on-primary: 60 47 0;          /* #3c2f00 */
+  --color-primary-container: 85 67 0;   /* #554300 */
+
+  /* Secondary — Luminous Emerald */
+  --color-secondary: 16 185 129;        /* #10b981 */
+  --color-secondary-light: 78 222 163;  /* #4edea3 */
+  --color-secondary-bright: 52 211 153; /* #34d399 */
+  --color-on-secondary: 0 56 36;        /* #003824 */
+
+  /* Tertiary */
+  --color-tertiary: 80 232 172;         /* #50e8ac */
+
+  /* Error */
+  --color-error: 255 180 171;           /* #ffb4ab */
+  --color-on-error: 105 0 5;            /* #690005 */
+  --color-error-container: 147 0 10;    /* #93000a */
+
+  /* Accents */
+  --color-outline: 153 144 124;         /* #99907c */
+  --color-outline-variant: 77 70 53;    /* #4d4635 */
+
+  /* Ivory / parchment text tiers */
+  --color-ivory: 247 246 242;           /* #f7f6f2 */
+  --color-parchment: 226 223 210;       /* #e2dfd2 */
+
+  /* Glass surfaces (used via Tailwind utilities) */
+  --glass-bg: rgba(16, 44, 34, 0.45);
+  --glass-bg-elevated: rgba(16, 44, 34, 0.70);
+  --glass-bg-floating: rgba(8, 20, 14, 0.90);
+  --glass-border-emerald: rgba(52, 211, 153, 0.12);
+  --glass-border-gold: rgba(212, 175, 55, 0.20);
+  --glass-border-gold-subtle: rgba(212, 175, 55, 0.15);
+
+  /* Glows */
+  --glow-rest: 0 0 40px rgba(16, 185, 129, 0.15), 0 0 80px rgba(212, 175, 55, 0.08);
+  --glow-active: 0 0 60px rgba(16, 185, 129, 0.35), 0 0 120px rgba(212, 175, 55, 0.20);
+  --glow-gold: 0 0 24px rgba(212, 175, 55, 0.25);
+  --glow-emerald: 0 0 24px rgba(52, 211, 153, 0.20);
+
+  /* Radii */
+  --radius-sm: 0.5rem;
+  --radius-md: 1rem;
+  --radius-lg: 1.5rem;
+  --radius-xl: 2rem;
+  --radius-2xl: 3rem;
+  --radius-full: 9999px;
+
+  /* Spacing */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* --- Light theme --- */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-canvas: 245 243 238;          /* warm cream */
+  --color-surface-lowest: 255 255 252;
+  --color-surface-low: 248 246 241;
+  --color-surface: 240 237 230;
+  --color-surface-high: 232 228 220;
+  --color-surface-highest: 220 216 207;
+  --color-surface-bright: 255 255 255;
+
+  --color-on-surface: 30 40 34;
+  --color-on-surface-variant: 70 65 55;
+  --color-on-surface-muted: 120 115 105;
+
+  --color-primary: 160 130 30;
+  --color-primary-light: 180 150 40;
+  --color-primary-dim: 140 115 25;
+  --color-on-primary: 255 255 250;
+  --color-primary-container: 235 220 170;
+
+  --color-secondary: 14 140 98;
+  --color-secondary-light: 20 160 112;
+  --color-secondary-bright: 16 150 105;
+  --color-on-secondary: 255 255 252;
+
+  --color-tertiary: 15 130 90;
+
+  --color-error: 200 50 50;
+  --color-on-error: 255 255 255;
+  --color-error-container: 255 230 228;
+
+  --color-outline: 170 165 155;
+  --color-outline-variant: 210 205 195;
+
+  --color-ivory: 40 40 35;
+  --color-parchment: 70 65 55;
+
+  --glass-bg: rgba(255, 255, 252, 0.70);
+  --glass-bg-elevated: rgba(255, 255, 252, 0.85);
+  --glass-bg-floating: rgba(255, 255, 252, 0.95);
+  --glass-border-emerald: rgba(14, 140, 98, 0.15);
+  --glass-border-gold: rgba(160, 130, 30, 0.20);
+  --glass-border-gold-subtle: rgba(160, 130, 30, 0.10);
+
+  --glow-rest: 0 0 40px rgba(14, 140, 98, 0.08), 0 0 80px rgba(160, 130, 30, 0.05);
+  --glow-active: 0 0 60px rgba(14, 140, 98, 0.15), 0 0 120px rgba(160, 130, 30, 0.10);
+  --glow-gold: 0 0 24px rgba(160, 130, 30, 0.12);
+  --glow-emerald: 0 0 24px rgba(14, 140, 98, 0.10);
+}
+
+
+/* ============================================================
+   TAILWIND v4 @theme — map CSS vars into Tailwind utilities
+   ============================================================ */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Fonts (set by next/font variables) */
+  --font-sans: var(--font-jakarta);
+  --font-serif: var(--font-playfair);
+
+  /* Colors — use rgb() so Tailwind can apply opacity modifiers */
+  --color-canvas: rgb(var(--color-canvas));
+  --color-surface-lowest: rgb(var(--color-surface-lowest));
+  --color-surface-low: rgb(var(--color-surface-low));
+  --color-surface: rgb(var(--color-surface));
+  --color-surface-high: rgb(var(--color-surface-high));
+  --color-surface-highest: rgb(var(--color-surface-highest));
+  --color-surface-bright: rgb(var(--color-surface-bright));
+
+  --color-on-surface: rgb(var(--color-on-surface));
+  --color-on-surface-variant: rgb(var(--color-on-surface-variant));
+  --color-on-surface-muted: rgb(var(--color-on-surface-muted));
+
+  --color-primary: rgb(var(--color-primary));
+  --color-primary-light: rgb(var(--color-primary-light));
+  --color-primary-dim: rgb(var(--color-primary-dim));
+  --color-on-primary: rgb(var(--color-on-primary));
+  --color-primary-container: rgb(var(--color-primary-container));
+
+  --color-secondary: rgb(var(--color-secondary));
+  --color-secondary-light: rgb(var(--color-secondary-light));
+  --color-secondary-bright: rgb(var(--color-secondary-bright));
+  --color-on-secondary: rgb(var(--color-on-secondary));
+
+  --color-tertiary: rgb(var(--color-tertiary));
+
+  --color-error: rgb(var(--color-error));
+  --color-on-error: rgb(var(--color-on-error));
+  --color-error-container: rgb(var(--color-error-container));
+
+  --color-outline: rgb(var(--color-outline));
+  --color-outline-variant: rgb(var(--color-outline-variant));
+
+  --color-ivory: rgb(var(--color-ivory));
+  --color-parchment: rgb(var(--color-parchment));
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+
+/* ============================================================
+   BASE STYLES
+   ============================================================ */
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: rgb(var(--color-canvas));
+  color: rgb(var(--color-on-surface));
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Focus-visible ring for keyboard accessibility */
+:focus-visible {
+  outline: 2px solid rgb(var(--color-primary));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Scrollbar styling (dark) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-outline-variant));
+  border-radius: var(--radius-full);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-outline));
+}
+
+/* Selection color */
+::selection {
+  background: rgba(var(--color-primary), 0.25);
+  color: rgb(var(--color-ivory));
+}
+
+
+/* ============================================================
+   UTILITY CLASSES — Glass surfaces
+   ============================================================ */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border-emerald);
+}
+
+.glass-elevated {
+  background: var(--glass-bg-elevated);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  border-top: 1px solid var(--glass-border-gold);
+  border-left: 1px solid var(--glass-border-gold);
+  border-right: 1px solid var(--glass-border-emerald);
+  border-bottom: 1px solid var(--glass-border-emerald);
+}
+
+.glass-floating {
+  background: var(--glass-bg-floating);
+  backdrop-filter: blur(32px);
+  -webkit-backdrop-filter: blur(32px);
+  border: 1px solid var(--glass-border-gold);
+}
+
+
+/* ============================================================
+   ANIMATED BACKGROUND — drifting gradient blobs
+   GPU-friendly: only transform & opacity.
+   Disabled under prefers-reduced-motion.
+   ============================================================ */
+.animated-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.animated-bg::before,
+.animated-bg::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform, opacity;
+}
+
+/* Emerald blob */
+.animated-bg::before {
+  width: 600px;
+  height: 600px;
+  top: -10%;
+  left: -10%;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.12) 0%, transparent 70%);
+  animation: drift-1 25s ease-in-out infinite alternate;
+}
+
+/* Gold blob */
+.animated-bg::after {
+  width: 500px;
+  height: 500px;
+  bottom: -10%;
+  right: -10%;
+  background: radial-gradient(circle, rgba(212, 175, 55, 0.08) 0%, transparent 70%);
+  animation: drift-2 30s ease-in-out infinite alternate;
+}
+
+@keyframes drift-1 {
+  0%   { transform: translate(0, 0) scale(1); opacity: 0.7; }
+  33%  { transform: translate(30vw, 20vh) scale(1.15); opacity: 0.9; }
+  66%  { transform: translate(10vw, 50vh) scale(0.95); opacity: 0.6; }
+  100% { transform: translate(50vw, 30vh) scale(1.1); opacity: 0.8; }
+}
+
+@keyframes drift-2 {
+  0%   { transform: translate(0, 0) scale(1); opacity: 0.6; }
+  33%  { transform: translate(-20vw, -30vh) scale(1.2); opacity: 0.8; }
+  66%  { transform: translate(-40vw, -10vh) scale(0.9); opacity: 0.5; }
+  100% { transform: translate(-30vw, -40vh) scale(1.05); opacity: 0.7; }
+}
+
+/* Faint noise texture overlay */
+.noise-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+/* Disable animation for users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .animated-bg::before,
+  .animated-bg::after {
+    animation: none !important;
+    opacity: 0.5;
+  }
+}
+
+
+/* ============================================================
+   TYPOGRAPHY HELPERS
+   ============================================================ */
+.text-display {
+  font-family: var(--font-serif), Georgia, serif;
+  font-size: clamp(2.375rem, 5vw, 3.5rem);
+  font-weight: 400;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.text-headline-lg {
+  font-family: var(--font-serif), Georgia, serif;
+  font-size: clamp(1.75rem, 3.5vw, 2.25rem);
+  font-weight: 500;
+  line-height: 1.28;
+  letter-spacing: -0.01em;
+}
+
+.text-headline-md {
+  font-family: var(--font-serif), Georgia, serif;
+  font-size: 1.5rem;
+  font-weight: 500;
+  line-height: 1.33;
+}
+
+.text-label {
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.33;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.text-label-sm {
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
