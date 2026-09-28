@@ -40,11 +40,11 @@
 
 | Main Voice Experience | Live Transcript & Test Orders |
 | :---: | :---: |
-| ![Voice Experience](public/screenshots/hero-call.png) *(Live audio-reactive Orb, latency badge, instant mute & mode switch)* | ![Transcript](public/screenshots/live-transcript.png) *(Streaming transcript with tool call chips & order states)* |
+| ![Voice Experience](public/screenshots/Screenshot%202026-09-29%20014457.png) *(Live audio-reactive Orb, latency badge, instant mute & mode switch)* | ![Transcript](public/screenshots/Screenshot%202026-09-29%20014657.png) *(Streaming transcript with tool call chips & order states)* |
 
 | Post-Call Intelligence & History | Public Insights Dashboard |
 | :---: | :---: |
-| ![Post-Call Summary](public/screenshots/post-call-summary.png) *(Structured JSON extraction, sentiment, & audit trail)* | ![Insights](public/screenshots/insights-dashboard.png) *(Aggregated KPIs, latency histogram, intent donut)* |
+| ![Post-Call Summary](public/screenshots/Screenshot%202026-09-29%20014613.png) *(Structured JSON extraction, sentiment, & audit trail)* | ![Insights](public/screenshots/Screenshot%202026-09-29%20014311.png) *(Aggregated KPIs, latency histogram, intent donut)* |
 
 ---
 
