@@ -23,6 +23,7 @@ import { getBrand } from "@/lib/brands";
 
 export function Navbar({
   mode = "realtime",
+  onSwitchMode,
   activeBrandId = "aura",
   onSwitchBrand,
   isInCall = false,
@@ -287,17 +288,51 @@ export function Navbar({
           </Tooltip>
         )}
 
-        {/* Active Mode indicator */}
-        <Badge
-          variant={mode === "realtime" ? "delivered" : "processing"}
-          dot
-          className="hidden sm:inline-flex text-xs font-mono"
+        {/* Active Voice Mode Toggle Button */}
+        <Tooltip
+          side="bottom"
+          align="end"
+          content={
+            mode === "realtime"
+              ? "Voice Mode: Gemini Live (Realtime Audio). Click to switch to Groq Fallback."
+              : "Voice Mode: Groq Fallback (Web Speech + LLM). Click to switch to Gemini Live."
+          }
         >
-          {mode === "realtime" ? "Gemini Live" : "Groq Fallback"}
-        </Badge>
+          <motion.button
+            type="button"
+            role="switch"
+            aria-checked={mode === "realtime"}
+            whileTap={tapScale}
+            whileHover={hoverLift}
+            onClick={() => onSwitchMode?.(mode === "realtime" ? "classic" : "realtime")}
+            className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono font-medium border transition-all cursor-pointer shadow-sm ${
+              mode === "realtime"
+                ? "bg-secondary/15 text-secondary-light border-secondary/35 hover:bg-secondary/25 hover:border-secondary/50"
+                : "bg-amber-500/15 text-amber-300 border-amber-500/35 hover:bg-amber-500/25 hover:border-amber-500/50"
+            }`}
+            aria-label={`Current voice mode: ${
+              mode === "realtime" ? "Gemini Live" : "Groq Fallback"
+            }. Click to switch to ${mode === "realtime" ? "Groq Fallback" : "Gemini Live"}.`}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                mode === "realtime" ? "bg-secondary-light animate-pulse" : "bg-amber-400"
+              }`}
+            />
+            <span>{mode === "realtime" ? "Gemini Live" : "Groq Fallback"}</span>
+          </motion.button>
+        </Tooltip>
 
-        {/* Theme Toggle */}
-        <ThemeToggle />
+        {/* Dark/Light Theme Toggle */}
+        <Tooltip
+          side="bottom"
+          align="end"
+          content="Toggle dark / light theme"
+        >
+          <div>
+            <ThemeToggle />
+          </div>
+        </Tooltip>
       </div>
     </header>
   );

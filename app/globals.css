@@ -6,8 +6,9 @@
    Dark-first with light toggle, class-based switching.
    ============================================================ */
 
-/* --- Dark theme (default) --- */
-:root {
+/* --- Brand: Aura (Default Dark) --- */
+:root,
+[data-brand="aura"] {
   color-scheme: dark;
 
   /* Canvas & surfaces */
@@ -89,8 +90,38 @@
   --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* --- Light theme --- */
-[data-theme="light"] {
+/* --- Brand: Kaveri Coffee Roasters (Dark Mode) --- */
+[data-brand="kaveri"] {
+  --color-canvas: 22 15 11;             /* #160f0b deep roasted void */
+  --color-surface-lowest: 14 9 7;
+  --color-surface-low: 28 19 14;
+  --color-surface: 34 23 17;
+  --color-surface-high: 46 32 24;
+  --color-surface-highest: 58 41 31;
+  --color-surface-bright: 68 49 38;
+
+  --color-on-surface: 240 230 220;
+  --color-on-surface-variant: 215 195 180;
+  --color-on-surface-muted: 175 150 135;
+
+  --color-primary: 234 88 12;           /* #ea580c rich terracotta copper */
+  --color-primary-light: 251 146 60;    /* #fb923c warm caramel */
+  --color-primary-dim: 194 65 12;
+  --color-on-primary: 255 255 255;
+  --color-primary-container: 124 45 10;
+
+  --color-secondary: 217 119 6;         /* #d97706 warm amber */
+  --color-secondary-light: 245 158 11;  /* #f59e0b crema gold */
+  --color-secondary-bright: 251 191 36;
+  --color-on-secondary: 0 0 0;
+
+  --glass-border-gold: rgba(234, 88, 12, 0.25);
+  --glass-border-gold-subtle: rgba(234, 88, 12, 0.15);
+}
+
+/* --- Light theme (Aura Skincare) --- */
+[data-theme="light"],
+[data-theme="light"][data-brand="aura"] {
   color-scheme: light;
 
   --color-canvas: 245 243 238;          /* warm cream */
@@ -125,7 +156,7 @@
   --color-outline: 170 165 155;
   --color-outline-variant: 210 205 195;
 
-  --color-ivory: 40 40 35;
+  --color-ivory: 30 40 34;
   --color-parchment: 70 65 55;
 
   --glass-bg: rgba(255, 255, 252, 0.70);
@@ -139,6 +170,46 @@
   --glow-active: 0 0 60px rgba(14, 140, 98, 0.15), 0 0 120px rgba(160, 130, 30, 0.10);
   --glow-gold: 0 0 24px rgba(160, 130, 30, 0.12);
   --glow-emerald: 0 0 24px rgba(14, 140, 98, 0.10);
+}
+
+/* --- Light theme (Kaveri Coffee Roasters) --- */
+[data-theme="light"][data-brand="kaveri"] {
+  color-scheme: light;
+
+  --color-canvas: 252 248 244;
+  --color-surface-lowest: 255 255 255;
+  --color-surface-low: 247 240 234;
+  --color-surface: 241 231 222;
+  --color-surface-high: 233 219 208;
+  --color-surface-highest: 223 205 192;
+  --color-surface-bright: 255 255 255;
+
+  --color-on-surface: 44 24 16;
+  --color-on-surface-variant: 84 54 40;
+  --color-on-surface-muted: 130 95 78;
+
+  --color-primary: 194 65 12;
+  --color-primary-light: 234 88 12;
+  --color-primary-dim: 154 52 10;
+  --color-on-primary: 255 255 255;
+  --color-primary-container: 254 215 170;
+
+  --color-secondary: 180 83 9;
+  --color-secondary-light: 217 119 6;
+  --color-secondary-bright: 245 158 11;
+  --color-on-secondary: 255 255 255;
+
+  --color-outline: 180 150 135;
+  --color-outline-variant: 220 200 185;
+
+  --color-ivory: 44 24 16;
+  --color-parchment: 84 54 40;
+
+  --glass-bg: rgba(255, 252, 248, 0.70);
+  --glass-bg-elevated: rgba(255, 252, 248, 0.85);
+  --glass-bg-floating: rgba(255, 252, 248, 0.95);
+  --glass-border-gold: rgba(234, 88, 12, 0.20);
+  --glass-border-gold-subtle: rgba(234, 88, 12, 0.10);
 }
 
 

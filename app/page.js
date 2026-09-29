@@ -447,6 +447,7 @@ export default function Home() {
       {/* ── Header with Animated Active Navigation & Guided Tour Ring ── */}
       <Navbar
         mode={mode}
+        onSwitchMode={switchMode}
         activeBrandId={brandId}
         onSwitchBrand={handleSwitchBrand}
         isInCall={isInCall}
