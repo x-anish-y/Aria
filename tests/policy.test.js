@@ -2,14 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { canCancel, canReturn, canReportDamage, shippingFee, codAvailable } from '@/lib/policy';
 import { seedOrders } from '@/lib/db';
 
-describe('lib/policy.js — Business Rules', () => {
+describe('lib/policy.js — Business Rules with Machine-Readable ruleCited & Explanation', () => {
   describe('canCancel(order)', () => {
-    it('allows cancellation ONLY when status is "Processing"', () => {
-      const processingOrder = { status: 'Processing' };
+    it('allows cancellation ONLY when status is "Processing" and returns ruleCited & explanation', () => {
+      const processingOrder = { status: 'Processing', placed_hours_ago: 2 };
       const res = canCancel(processingOrder);
       expect(res.allowed).toBe(true);
       expect(res.eligible).toBe(true);
       expect(res.reason).toBeNull();
+      expect(res.ruleCited).toMatch(/CANCEL_WINDOW.*Processing/i);
+      expect(res.explanation).toBeDefined();
     });
 
     it('refuses cancellation for ORD-101 ("Out for Delivery") and mentions refusal at doorstep', () => {
@@ -18,6 +20,8 @@ describe('lib/policy.js — Business Rules', () => {
       expect(res.allowed).toBe(false);
       expect(res.eligible).toBe(false);
       expect(res.reason).toMatch(/doorstep|refuse/i);
+      expect(res.ruleCited).toMatch(/CANCEL_WINDOW.*Out for Delivery/i);
+      expect(res.explanation).toMatch(/doorstep/i);
     });
 
     it('refuses cancellation for "Shipped" status and mentions refusal at doorstep', () => {
@@ -25,6 +29,7 @@ describe('lib/policy.js — Business Rules', () => {
       const res = canCancel(shippedOrder);
       expect(res.allowed).toBe(false);
       expect(res.reason).toMatch(/doorstep|refuse/i);
+      expect(res.ruleCited).toMatch(/CANCEL_WINDOW.*Shipped/i);
     });
 
     it('refuses cancellation for ORD-102 ("Delivered") because it is already delivered', () => {
@@ -32,6 +37,7 @@ describe('lib/policy.js — Business Rules', () => {
       const res = canCancel(ord102);
       expect(res.allowed).toBe(false);
       expect(res.reason).toMatch(/already delivered/i);
+      expect(res.ruleCited).toMatch(/CANCEL_WINDOW.*Delivered/i);
     });
 
     it('refuses cancellation when already "Cancellation Requested"', () => {
@@ -39,10 +45,12 @@ describe('lib/policy.js — Business Rules', () => {
       const res = canCancel(pendingCancel);
       expect(res.allowed).toBe(false);
       expect(res.reason).toMatch(/already.*cancellation.*requested/i);
+      expect(res.ruleCited).toMatch(/CANCEL_WINDOW.*cancellation already requested/i);
     });
 
     it('refuses cancellation for unknown or null status', () => {
       expect(canCancel(null).allowed).toBe(false);
+      expect(canCancel(null).ruleCited).toMatch(/CANCEL_WINDOW/i);
       expect(canCancel({}).allowed).toBe(false);
       expect(canCancel({ status: 'Refunded' }).allowed).toBe(false);
     });
@@ -61,6 +69,8 @@ describe('lib/policy.js — Business Rules', () => {
       expect(res.requiresUnopenedUnusedOriginalPackaging).toBe(true);
       expect(res.damagedDefectiveRule).toBeDefined();
       expect(res.reason).toBeNull();
+      expect(res.ruleCited).toMatch(/RETURN_WINDOW: delivered 3 days ago <= 7-day limit/i);
+      expect(res.explanation).toMatch(/7-day return window/i);
     });
 
     it('allows return on boundary delivered_days_ago === 7', () => {
@@ -71,9 +81,10 @@ describe('lib/policy.js — Business Rules', () => {
       };
       const res = canReturn(boundaryOrder);
       expect(res.allowed).toBe(true);
+      expect(res.ruleCited).toMatch(/delivered 7 days ago <= 7-day limit/i);
     });
 
-    it('refuses return for ORD-102 (Delivered 14 days ago) and cites day count in reason', () => {
+    it('refuses return for ORD-102 (Delivered 14 days ago) and cites day count in reason & ruleCited', () => {
       const ord102 = {
         order_id: 'ORD-102',
         status: 'Delivered',
@@ -83,6 +94,8 @@ describe('lib/policy.js — Business Rules', () => {
       expect(res.allowed).toBe(false);
       expect(res.reason).toMatch(/14.*days/i);
       expect(res.reason).toMatch(/7.*days/i);
+      expect(res.ruleCited).toMatch(/RETURN_WINDOW: delivered 14 days ago > 7-day limit/i);
+      expect(res.explanation).toBeDefined();
       expect(res.requiresUnopenedUnusedOriginalPackaging).toBe(true);
       expect(res.damagedDefectiveRule).toBeDefined();
     });
@@ -94,11 +107,13 @@ describe('lib/policy.js — Business Rules', () => {
       const res101 = canReturn(ord101);
       expect(res101.allowed).toBe(false);
       expect(res101.reason).toMatch(/only delivered/i);
+      expect(res101.ruleCited).toMatch(/RETURN_WINDOW: status is "Out for Delivery"/i);
       expect(res101.requiresUnopenedUnusedOriginalPackaging).toBe(true);
 
       const res103 = canReturn(ord103);
       expect(res103.allowed).toBe(false);
       expect(res103.reason).toMatch(/only delivered/i);
+      expect(res103.ruleCited).toMatch(/RETURN_WINDOW: status is "Processing"/i);
     });
 
     it('always includes requiresUnopenedUnusedOriginalPackaging and damagedDefectiveRule', () => {
@@ -106,41 +121,55 @@ describe('lib/policy.js — Business Rules', () => {
       expect(res.requiresUnopenedUnusedOriginalPackaging).toBe(true);
       expect(typeof res.damagedDefectiveRule).toBe('string');
       expect(res.damagedDefectiveRule.length).toBeGreaterThan(10);
+      expect(res.ruleCited).toBeDefined();
     });
   });
 
   describe('shippingFee(value)', () => {
     it('charges Rs 50 when value is exactly Rs 499 (boundary check)', () => {
-      expect(shippingFee(499)).toBe(50);
+      const res = shippingFee(499);
+      expect(res.fee).toBe(50);
+      expect(res.ruleCited).toMatch(/SHIPPING_POLICY.*<= Rs 499/i);
+      expect(res.explanation).toBeDefined();
     });
 
     it('gives free shipping (Rs 0) when value is Rs 500 (boundary check)', () => {
-      expect(shippingFee(500)).toBe(0);
+      const res = shippingFee(500);
+      expect(res.fee).toBe(0);
+      expect(res.ruleCited).toMatch(/SHIPPING_POLICY.*> Rs 499.*free/i);
     });
 
     it('charges Rs 50 when value is less than Rs 499', () => {
-      expect(shippingFee(0)).toBe(50);
-      expect(shippingFee(250)).toBe(50);
-      expect(shippingFee(498)).toBe(50);
+      expect(shippingFee(0).fee).toBe(50);
+      expect(shippingFee(250).fee).toBe(50);
+      expect(shippingFee(498).fee).toBe(50);
     });
 
     it('gives free shipping when value is greater than Rs 499', () => {
-      expect(shippingFee(699)).toBe(0);
-      expect(shippingFee(850)).toBe(0);
-      expect(shippingFee(2500)).toBe(0);
+      expect(shippingFee(699).fee).toBe(0);
+      expect(shippingFee(850).fee).toBe(0);
+      expect(shippingFee(2500).fee).toBe(0);
     });
   });
 
   describe('codAvailable(value)', () => {
     it('allows COD for orders up to Rs 2500', () => {
-      expect(codAvailable(500)).toBe(true);
-      expect(codAvailable(850)).toBe(true);
-      expect(codAvailable(2500)).toBe(true);
+      const res500 = codAvailable(500);
+      expect(res500.available).toBe(true);
+      expect(res500.ruleCited).toMatch(/COD_POLICY.*<= Rs 2500/i);
+      expect(res500.explanation).toBeDefined();
+
+      expect(codAvailable(850).available).toBe(true);
+      expect(codAvailable(2500).available).toBe(true);
     });
 
     it('disallows COD for orders strictly greater than Rs 2500', () => {
-      expect(codAvailable(2501)).toBe(false);
-      expect(codAvailable(3000)).toBe(false);
+      const res2501 = codAvailable(2501);
+      expect(res2501.available).toBe(false);
+      expect(res2501.ruleCited).toMatch(/COD_POLICY.*> Rs 2500/i);
+      expect(res2501.explanation).toBeDefined();
+
+      expect(codAvailable(3000).available).toBe(false);
     });
   });
 
@@ -156,6 +185,7 @@ describe('lib/policy.js — Business Rules', () => {
       expect(res.eligible).toBe(true);
       expect(res.reason).toBeNull();
       expect(res.ruleCited).toMatch(/DAMAGE_WINDOW/i);
+      expect(res.explanation).toBeDefined();
     });
 
     it('allows reporting damage on boundary delivered_days_ago === 2', () => {
@@ -167,6 +197,7 @@ describe('lib/policy.js — Business Rules', () => {
       const res = canReportDamage(boundaryOrder);
       expect(res.allowed).toBe(true);
       expect(res.eligible).toBe(true);
+      expect(res.ruleCited).toMatch(/DAMAGE_WINDOW/i);
     });
 
     it('refuses damage reporting for ORD-102 (Delivered 14 days ago) with 48 hours window reason', () => {
@@ -178,6 +209,7 @@ describe('lib/policy.js — Business Rules', () => {
         'DAMAGE_WINDOW: delivered 14 days ago, damaged/defective must be reported within 48 hours of delivery'
       );
       expect(res.ruleCited).toContain('DAMAGE_WINDOW');
+      expect(res.explanation).toBeDefined();
     });
 
     it('refuses damage reporting for ORD-101 (Out for Delivery) with doorstep refusal reason', () => {
@@ -188,6 +220,7 @@ describe('lib/policy.js — Business Rules', () => {
       expect(res.reason).toBe(
         'not delivered yet; customer can refuse delivery at the doorstep if out for delivery'
       );
+      expect(res.ruleCited).toMatch(/DAMAGE_WINDOW/i);
     });
 
     it('refuses damage reporting for ORD-103 (Processing) with not delivered reason', () => {
@@ -198,6 +231,7 @@ describe('lib/policy.js — Business Rules', () => {
       expect(res.reason).toBe(
         'not delivered yet; customer can refuse delivery at the doorstep if out for delivery'
       );
+      expect(res.ruleCited).toMatch(/DAMAGE_WINDOW/i);
     });
   });
 
@@ -207,24 +241,30 @@ describe('lib/policy.js — Business Rules', () => {
 
       // ORD-101: Out for Delivery, Rs 699
       expect(canCancel(ord101).allowed).toBe(false);
+      expect(canCancel(ord101).ruleCited).toBeDefined();
       expect(canReturn(ord101).allowed).toBe(false);
+      expect(canReturn(ord101).ruleCited).toBeDefined();
       expect(canReportDamage(ord101).allowed).toBe(false);
-      expect(shippingFee(ord101.value_inr)).toBe(0);
-      expect(codAvailable(ord101.value_inr)).toBe(true);
+      expect(shippingFee(ord101.value_inr).fee).toBe(0);
+      expect(shippingFee(ord101.value_inr).ruleCited).toBeDefined();
+      expect(codAvailable(ord101.value_inr).available).toBe(true);
+      expect(codAvailable(ord101.value_inr).ruleCited).toBeDefined();
 
       // ORD-102: Delivered 14 days ago, Rs 499
       expect(canCancel(ord102).allowed).toBe(false);
       expect(canReturn(ord102).allowed).toBe(false);
+      expect(canReturn(ord102).ruleCited).toMatch(/14 days ago > 7-day limit/i);
       expect(canReportDamage(ord102).allowed).toBe(false);
-      expect(shippingFee(ord102.value_inr)).toBe(50);
-      expect(codAvailable(ord102.value_inr)).toBe(true);
+      expect(shippingFee(ord102.value_inr).fee).toBe(50);
+      expect(codAvailable(ord102.value_inr).available).toBe(true);
 
       // ORD-103: Processing, Rs 850
       expect(canCancel(ord103).allowed).toBe(true);
+      expect(canCancel(ord103).ruleCited).toMatch(/Processing/i);
       expect(canReturn(ord103).allowed).toBe(false);
       expect(canReportDamage(ord103).allowed).toBe(false);
-      expect(shippingFee(ord103.value_inr)).toBe(0);
-      expect(codAvailable(ord103.value_inr)).toBe(true);
+      expect(shippingFee(ord103.value_inr).fee).toBe(0);
+      expect(codAvailable(ord103.value_inr).available).toBe(true);
     });
   });
 });

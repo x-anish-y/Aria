@@ -40,7 +40,12 @@ import {
   FileText,
   User,
   Bot,
+  Brain,
+  Share2,
 } from "lucide-react";
+import { ReplayPlayer } from "@/components/ReplayPlayer";
+import { QAScorecard } from "@/components/QAScorecard";
+import { getSessionRecording } from "@/lib/audio/indexeddb-audio";
 import {
   fadeUp,
   fadeIn,
@@ -253,12 +258,87 @@ export function PostCallSummary({
   metrics = {},
   transcript = [],
   toolEvents = [],
+  callId = null,
+  recording = null,
   onStartNewCall,
   onOpenHistory,
 }) {
   const [copiedJson, setCopiedJson] = useState(false);
   const [copiedOrderId, setCopiedOrderId] = useState(false);
+  const [copiedShareLink, setCopiedShareLink] = useState(false);
   const [isTimelineExpanded, setIsTimelineExpanded] = useState(true);
+  const [idbRecording, setIdbRecording] = useState(null);
+  const [qaData, setQaData] = useState(summary?.qa || null);
+  const [qaLoading, setQaLoading] = useState(false);
+
+  // Synchronize QA data when summary arrives or changes
+  useEffect(() => {
+    if (summary?.qa) {
+      setQaData(summary.qa);
+      setQaLoading(false);
+      return;
+    }
+
+    // Non-blocking background QA audit: triggers after summary renders
+    if (summary && !summary.qa && transcript && transcript.length > 0) {
+      let isMounted = true;
+      setQaLoading(true);
+
+      fetch("/api/summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "qa",
+          callId: callId || summary?.callId,
+          transcript,
+          toolEvents,
+          summary,
+        }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (isMounted) {
+            if (data.ok && data.qa) {
+              setQaData(data.qa);
+            }
+            setQaLoading(false);
+          }
+        })
+        .catch((err) => {
+          console.warn("[PostCallSummary] QA audit fetch error:", err);
+          if (isMounted) setQaLoading(false);
+        });
+
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [summary, callId, transcript, toolEvents]);
+
+  // If recording wasn't passed directly in memory, attempt retrieving from IndexedDB
+  useEffect(() => {
+    if (recording?.url) return;
+    const lookupId = callId || summary?.callId;
+    if (lookupId) {
+      getSessionRecording(lookupId).then((cached) => {
+        if (cached) setIdbRecording(cached);
+      });
+    }
+  }, [callId, summary, recording]);
+
+  const activeRecording = recording || idbRecording;
+
+  const handleCopyShareLink = async () => {
+    const targetCallId = callId || summary?.callId || "demo-call-1";
+    const shareUrl = `${window.location.origin}/call/${targetCallId}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopiedShareLink(true);
+      setTimeout(() => setCopiedShareLink(false), 2000);
+    } catch {
+      // fallback
+    }
+  };
 
   const intent = summary?.customer_intent || "OTHER";
   const intentMeta = INTENT_CONFIG[intent] || INTENT_CONFIG.OTHER;
@@ -403,7 +483,28 @@ export function PostCallSummary({
           </h2>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Copy Share Link Button (Task 16) */}
+          <motion.button
+            whileTap={tapScale}
+            whileHover={hoverLift}
+            onClick={handleCopyShareLink}
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold text-ivory bg-surface-container border border-primary/30 hover:border-primary/60 transition-colors shadow-sm"
+            title="Copy public report link to clipboard"
+          >
+            {copiedShareLink ? (
+              <>
+                <Check className="w-4 h-4 text-primary" />
+                <span className="text-primary font-semibold">Link Copied!</span>
+              </>
+            ) : (
+              <>
+                <Share2 className="w-4 h-4 text-primary-light" />
+                <span>Copy Share Link</span>
+              </>
+            )}
+          </motion.button>
+
           {onOpenHistory && (
             <motion.button
               whileTap={tapScale}
@@ -600,6 +701,96 @@ export function PostCallSummary({
             database operations
           </span>
         </div>
+      </motion.div>
+
+      {/* ── 2.5 Agent Brain Reasoning & Policy Verdicts Audit ── */}
+      {toolEvents && toolEvents.length > 0 && (
+        <motion.div
+          variants={staggerItem}
+          className="rounded-3xl p-6 border border-outline-variant/20 bg-surface-container/60 backdrop-blur-xl shadow-lg"
+        >
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-primary">
+                <Brain className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="font-mono text-xs uppercase tracking-wider text-ivory font-semibold">
+                  Agent Brain Reasoning & Policy Verdicts Audit
+                </h3>
+                <span className="text-[11px] text-on-surface-muted">
+                  {toolEvents.length} decision event{toolEvents.length === 1 ? "" : "s"} recorded during call
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-80 overflow-y-auto pr-1 scrollbar-thin">
+            {toolEvents.map((evt, idx) => {
+              const isAllowed = evt.status === "allowed" || evt.status === "success";
+              return (
+                <div
+                  key={evt.id || idx}
+                  className={`p-3.5 rounded-2xl border ${
+                    evt.kind === "POLICY_VERDICT"
+                      ? isAllowed
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-200"
+                        : "bg-rose-500/10 border-rose-500/30 text-rose-200"
+                      : evt.kind === "GUARDRAIL"
+                      ? "bg-amber-500/10 border-amber-500/30 text-amber-200"
+                      : "bg-white/[0.03] border-white/10 text-on-surface"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider bg-black/40 border border-white/10">
+                      {evt.kind || "DECISION"}
+                    </span>
+                    <span className="text-[10px] font-mono opacity-60">
+                      {evt.timestamp || ""}
+                    </span>
+                  </div>
+
+                  <h4 className="text-xs font-semibold text-ivory mt-1">
+                    {evt.title || evt.name || "Tool Operation"}
+                  </h4>
+
+                  {evt.ruleCited && (
+                    <div className="my-1.5 p-1.5 rounded-lg bg-black/40 border border-white/10 font-mono text-[10px] text-accent break-all">
+                      Rule: {evt.ruleCited}
+                    </div>
+                  )}
+
+                  <p className="text-xs text-on-surface-variant leading-relaxed mt-1">
+                    {typeof evt.detail === "string"
+                      ? evt.detail
+                      : evt.detail?.resultSummary || evt.reason || "Operation recorded."}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </motion.div>
+      )}
+
+      {/* ── 2.7 Automatic QA Scorecard (Task 17) ── */}
+      <motion.div variants={staggerItem}>
+        <QAScorecard qa={qaData} loading={qaLoading} />
+      </motion.div>
+
+      {/* ── 2.8 Customer Voice Input Replay ── */}
+      <motion.div variants={staggerItem}>
+        <ReplayPlayer
+          recordingUrl={activeRecording?.url}
+          recordingBlob={activeRecording?.blob}
+          durationMs={
+            activeRecording?.durationMs ||
+            (metrics?.durationSeconds ? metrics.durationSeconds * 1000 : null) ||
+            (summary?.duration_seconds ? summary.duration_seconds * 1000 : null)
+          }
+          transcript={transcript}
+          isClassicOnly={activeRecording?.isClassicOnly}
+          callId={callId || summary?.callId}
+        />
       </motion.div>
 
       {/* ── 3. JSON Evaluation Block ──────────────────────────────────── */}

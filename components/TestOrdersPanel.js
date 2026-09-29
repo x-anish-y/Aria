@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { Badge, Chip, GlassCard } from "@/components/ui";
 import { springGentle, springSnap } from "@/lib/motion";
+import { getBrand } from "@/lib/brands";
 
 const TRY_SAYING_PROMPTS = [
   {
@@ -70,6 +71,45 @@ const TRY_SAYING_PROMPTS = [
     label: "Book flight to Goa",
     prompt: "Can you book me a flight to Goa this weekend?",
     desc: "Out of scope steer",
+  },
+];
+
+const KAVERI_TRY_SAYING_PROMPTS = [
+  {
+    id: "track-201",
+    label: "Where is KAV-201?",
+    prompt: "Where is my order KAV-201?",
+    desc: "Tracking lookup",
+  },
+  {
+    id: "cancel-201",
+    label: "Cancel KAV-201",
+    prompt: "I want to cancel order KAV-201.",
+    desc: "Refused (Out for Delivery)",
+  },
+  {
+    id: "cancel-203",
+    label: "Cancel KAV-203",
+    prompt: "Please cancel order KAV-203 for me.",
+    desc: "Allowed (Processing)",
+  },
+  {
+    id: "return-202",
+    label: "Return KAV-202",
+    prompt: "I would like to return order KAV-202.",
+    desc: "Refused (Perishable food)",
+  },
+  {
+    id: "invalid-999",
+    label: "Check KAV-999",
+    prompt: "Can you check order KAV-999?",
+    desc: "Invalid order ID",
+  },
+  {
+    id: "cross-brand-ord-101",
+    label: "Check ORD-101",
+    prompt: "Can you check status of order ORD-101?",
+    desc: "Cross-brand refusal test",
   },
 ];
 
@@ -114,18 +154,33 @@ function TestOrdersPanelComponent({
   lastToolEvent = null,
   onSelectPrompt = null,
   onToast = null,
+  brandId = "aura",
   className = "",
 }) {
-  const [orders, setOrders] = useState(DEFAULT_ORDERS);
+  const brand = getBrand(brandId);
+  const tryPrompts = brand.id === "kaveri" ? KAVERI_TRY_SAYING_PROMPTS : TRY_SAYING_PROMPTS;
+
+  const initialOrders = brand.testOrders.map((o) => ({
+    order_id: o.id,
+    customer_name: o.customerName,
+    product: o.product,
+    value_inr: o.valueInr,
+    status: o.status,
+    notes: o.notes,
+  }));
+
+  const [orders, setOrders] = useState(initialOrders);
   const [copiedId, setCopiedId] = useState(null);
   const [highlightedOrderId, setHighlightedOrderId] = useState(null);
   const [isResetting, setIsResetting] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
-  // Fetch orders from API
+  // Fetch orders from API filtered by brand
   const fetchOrders = useCallback(async () => {
     try {
-      const res = await fetch(`/api/orders?sessionId=${encodeURIComponent(sessionId)}`);
+      const res = await fetch(
+        `/api/orders?sessionId=${encodeURIComponent(sessionId)}&brandId=${encodeURIComponent(brandId)}`
+      );
       if (res.ok) {
         const data = await res.json();
         if (data.ok && Array.isArray(data.orders)) {
@@ -135,11 +190,11 @@ function TestOrdersPanelComponent({
     } catch (err) {
       console.warn("[TestOrdersPanel] Failed to fetch live orders:", err);
     }
-  }, [sessionId]);
+  }, [sessionId, brandId]);
 
   useEffect(() => {
     fetchOrders();
-  }, [fetchOrders]);
+  }, [fetchOrders, brandId]);
 
   // Highlight card when agent looks up or modifies an order
   useEffect(() => {
@@ -183,6 +238,11 @@ function TestOrdersPanelComponent({
       const data = await res.json();
       if (data.ok) {
         onToast?.("Demo data reset to initial catalog values", "info");
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("aria:reset-tour", { detail: { sessionId } })
+          );
+        }
         await fetchOrders();
       } else {
         onToast?.(data.error || "Reset failed", "error");
@@ -321,15 +381,15 @@ function TestOrdersPanelComponent({
         <div className="flex items-center gap-1.5">
           <Sparkles className="w-3.5 h-3.5 text-primary-light" />
           <h3 className="text-xs font-semibold uppercase tracking-wider text-ivory">
-            Try Saying to Aria
+            Try Saying to {brand.persona_name}
           </h3>
         </div>
         <p className="text-[11px] text-on-surface-muted">
-          Click any scenario to test Aria’s guardrails, tool calls, and policies:
+          Click any scenario to test {brand.persona_name}’s guardrails, tool calls, and policies:
         </p>
 
         <div className="flex flex-wrap gap-2 pt-1">
-          {TRY_SAYING_PROMPTS.map((item) => (
+          {tryPrompts.map((item) => (
             <Chip
               key={item.id}
               onClick={() => onSelectPrompt?.(item.prompt)}

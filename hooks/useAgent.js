@@ -101,6 +101,18 @@ export function useAgent(options = {}) {
     setToast(null);
   }, []);
 
+  const resetSession = useCallback(() => {
+    const newSid = "session-" + Math.random().toString(36).slice(2, 9);
+    setPersistentSessionId(newSid);
+    if (typeof window !== "undefined") {
+      try {
+        sessionStorage.setItem(SESSION_STORAGE_KEY, newSid);
+        localStorage.setItem(SESSION_STORAGE_KEY, newSid);
+      } catch {}
+    }
+    return newSid;
+  }, []);
+
   // Options augmented with unified persistent sessionId
   const agentOptions = useMemo(() => ({
     ...options,
@@ -209,14 +221,18 @@ export function useAgent(options = {}) {
     toast,
     clearToast,
 
-    // Delegated state from active agent
     state: activeAgent.state,
     transcript: activeAgent.transcript,
     toolEvents: activeAgent.toolEvents,
+    detectedIntent: activeAgent.detectedIntent || { intent: "IDLE", label: "Awaiting Input", confidence: 1 },
+    clearToolEvents: activeAgent.clearToolEvents || (() => {}),
     latency: activeAgent.latency,
     micAnalyser: activeAgent.micAnalyser,
     agentAnalyser: activeAgent.agentAnalyser,
     isMuted: activeAgent.isMuted,
+    isUnclearAudio: activeAgent.isUnclearAudio || false,
+    callResolution: activeAgent.callResolution || null,
+    recording: activeAgent.recording || null,
     error: activeAgent.error,
     unsupportedReason: activeAgent.unsupportedReason || null,
     sessionId: persistentSessionId || activeAgent.sessionId,
@@ -227,5 +243,6 @@ export function useAgent(options = {}) {
     mute: activeAgent.mute,
     sendUserMessage: activeAgent.sendUserMessage,
     interrupt: activeAgent.interrupt,
+    resetSession,
   };
 }

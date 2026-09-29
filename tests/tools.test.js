@@ -114,15 +114,26 @@ describe('lib/tools.js — Tool implementations & Session Isolation', () => {
       expect(res.reason).toMatch(/doorstep|refuse/i);
     });
 
-    it('successfully cancels ORD-103 when status is Processing', async () => {
-      const res = await requestCancellation('ORD-103', 'test-session-fresh');
+    it('successfully cancels ORD-103 when status is Processing (two-phase)', async () => {
+      const p1 = await requestCancellation('ORD-103', 'test-session-fresh');
+      expect(p1.status).toBe('CONFIRMATION_REQUIRED');
+      expect(p1.confirmToken).toBeDefined();
+
+      const res = await requestCancellation(
+        { orderId: 'ORD-103', confirmToken: p1.confirmToken },
+        'test-session-fresh'
+      );
       expect(res.success).toBe(true);
       expect(res.order_id).toBe('ORD-103');
-      expect(res.status).toBe('Cancellation Requested');
+      expect(res.status).toBe('CANCELLED');
     });
 
     it('refuses cancellation on second attempt for the same session', async () => {
-      const first = await requestCancellation('ORD-103', 'test-session-A');
+      const p1 = await requestCancellation('ORD-103', 'test-session-A');
+      const first = await requestCancellation(
+        { orderId: 'ORD-103', confirmToken: p1.confirmToken },
+        'test-session-A'
+      );
       expect(first.success).toBe(true);
 
       // Second attempt in same session must be refused by eligibility re-check
@@ -136,7 +147,11 @@ describe('lib/tools.js — Tool implementations & Session Isolation', () => {
   describe('Session Isolation', () => {
     it('cancellation in session A is invisible in session B', async () => {
       // 1. Session A cancels ORD-103
-      const cancelResA = await requestCancellation('ORD-103', 'test-session-A');
+      const p1A = await requestCancellation('ORD-103', 'test-session-A');
+      const cancelResA = await requestCancellation(
+        { orderId: 'ORD-103', confirmToken: p1A.confirmToken },
+        'test-session-A'
+      );
       expect(cancelResA.success).toBe(true);
 
       // 2. Query ORD-103 in Session A -> status is "Cancellation Requested", canCancel is false
@@ -152,12 +167,20 @@ describe('lib/tools.js — Tool implementations & Session Isolation', () => {
       expect(orderB.eligibility.canCancel).toBe(true);
 
       // 4. Session B can cancel independently
-      const cancelResB = await requestCancellation('ORD-103', 'test-session-B');
+      const p1B = await requestCancellation('ORD-103', 'test-session-B');
+      const cancelResB = await requestCancellation(
+        { orderId: 'ORD-103', confirmToken: p1B.confirmToken },
+        'test-session-B'
+      );
       expect(cancelResB.success).toBe(true);
     });
 
     it('clearing session overrides resets status back to base order', async () => {
-      await requestCancellation('ORD-103', 'test-session-A');
+      const p1 = await requestCancellation('ORD-103', 'test-session-A');
+      await requestCancellation(
+        { orderId: 'ORD-103', confirmToken: p1.confirmToken },
+        'test-session-A'
+      );
       let order = await getOrderDetails('ORD-103', 'test-session-A');
       expect(order.order.status).toBe('Cancellation Requested');
 

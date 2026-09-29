@@ -11,7 +11,7 @@
  */
 
 import dns from "node:dns";
-import { SYSTEM_INSTRUCTION, TOOL_DECLARATIONS, toOpenAITools } from "@/lib/agent-config";
+import { SYSTEM_INSTRUCTION, buildSystemInstruction, TOOL_DECLARATIONS, toOpenAITools } from "@/lib/agent-config";
 import { getOrderDetails, requestCancellation, createSupportTicket } from "@/lib/tools";
 import { checkRateLimit } from "@/lib/db";
 
@@ -65,6 +65,7 @@ export async function POST(request) {
     }
 
     const { messages = [], sessionId = "default-session" } = body || {};
+    const brandId = body?.brandId || body?.brand_id || "aura";
 
     if (!Array.isArray(messages) || messages.length === 0) {
       return Response.json(
@@ -76,11 +77,11 @@ export async function POST(request) {
     const model = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
     const openAiTools = toOpenAITools(TOOL_DECLARATIONS);
 
-    // Build message list with SYSTEM_INSTRUCTION
+    // Build message list with brand-aware system instruction
     const conversation = [];
     const hasSystem = messages.some((m) => m.role === "system");
     if (!hasSystem) {
-      conversation.push({ role: "system", content: SYSTEM_INSTRUCTION });
+      conversation.push({ role: "system", content: buildSystemInstruction(brandId) });
     }
     for (const msg of messages) {
       conversation.push({
@@ -260,12 +261,14 @@ export async function POST(request) {
                 switch (tc.name) {
                   case "getOrderDetails": {
                     const orderId = parsedArgs.orderId || parsedArgs.order_id;
-                    result = await getOrderDetails(orderId, sessionId);
+                    result = await getOrderDetails(orderId, sessionId, brandId);
                     break;
                   }
                   case "requestCancellation": {
                     const orderId = parsedArgs.orderId || parsedArgs.order_id;
-                    result = await requestCancellation(orderId, sessionId);
+                    const confirmToken = parsedArgs.confirmToken || parsedArgs.confirm_token;
+                    const phase = parsedArgs.phase;
+                    result = await requestCancellation({ orderId, confirmToken, phase, brandId }, sessionId);
                     break;
                   }
                   case "createSupportTicket": {

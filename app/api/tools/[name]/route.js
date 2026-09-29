@@ -40,17 +40,20 @@ export async function POST(request, { params }) {
 
     const sessionId = body.sessionId || body.session_id || "default-session";
     const args = body.args || body.arguments || body;
+    const brandId = body.brandId || body.brand_id || args.brandId || args.brand_id || "aura";
 
     switch (toolName) {
       case "getOrderDetails": {
         const orderId = args.orderId || args.order_id || body.orderId || body.order_id;
-        const result = await getOrderDetails(orderId, sessionId);
+        const result = await getOrderDetails(orderId, sessionId, brandId);
         return Response.json({ ok: true, result }, { status: 200 });
       }
 
       case "requestCancellation": {
         const orderId = args.orderId || args.order_id || body.orderId || body.order_id;
-        const result = await requestCancellation(orderId, sessionId);
+        const confirmToken = args.confirmToken || args.confirm_token || body.confirmToken || body.confirm_token;
+        const phase = args.phase || body.phase;
+        const result = await requestCancellation({ orderId, confirmToken, phase, brandId }, sessionId, brandId);
         return Response.json({ ok: true, result }, { status: 200 });
       }
 

@@ -17,7 +17,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import dns from "node:dns";
-import { SYSTEM_INSTRUCTION, TOOL_DECLARATIONS, toOpenAITools } from "../lib/agent-config.js";
+import { SYSTEM_INSTRUCTION, buildSystemInstruction, TOOL_DECLARATIONS, toOpenAITools } from "../lib/agent-config.js";
 import { getOrderDetails, requestCancellation, createSupportTicket } from "../lib/tools.js";
 
 // Ensure IPv4 priority for Node fetch on Windows
@@ -49,13 +49,13 @@ function getEnvConfig() {
 }
 
 // ── 2. Tool Execution Dispatcher ────────────────────────────────────────────
-async function executeTool(name, args, sessionId) {
+async function executeTool(name, args, sessionId, brandId = "aura") {
   try {
     if (name === "getOrderDetails") {
-      return await getOrderDetails(args.orderId, sessionId);
+      return await getOrderDetails(args.orderId, sessionId, brandId);
     }
     if (name === "requestCancellation") {
-      return await requestCancellation(args.orderId, sessionId);
+      return await requestCancellation(args, sessionId, brandId);
     }
     if (name === "createSupportTicket") {
       return await createSupportTicket(args, sessionId);
@@ -90,10 +90,12 @@ async function fetchWithRetry(url, options, maxRetries = 5) {
 
 // ── 4. Single Scenario Evaluation Runner ────────────────────────────────────
 async function runScenario(scenario, { groqKey, groqModel }) {
+  const brandId = scenario.brandId || "aura";
   const sessionId = `eval-${scenario.id}-${Date.now()}`;
   const openAiTools = toOpenAITools(TOOL_DECLARATIONS);
 
-  const messages = [{ role: "system", content: SYSTEM_INSTRUCTION }];
+  const systemInstruction = buildSystemInstruction(brandId);
+  const messages = [{ role: "system", content: systemInstruction }];
   const toolsCalled = [];
   const assistantReplies = [];
   const conversationLog = [];
@@ -148,7 +150,7 @@ async function runScenario(scenario, { groqKey, groqModel }) {
             fnArgs = JSON.parse(tc.function.arguments || "{}");
           } catch {}
 
-          const toolResult = await executeTool(fnName, fnArgs, sessionId);
+          const toolResult = await executeTool(fnName, fnArgs, sessionId, brandId);
           conversationLog.push({
             role: "tool",
             name: fnName,
@@ -268,20 +270,28 @@ async function main() {
   const onlyArg =
     args.find((a) => a.startsWith("--only="))?.split("=")[1] ||
     (args.includes("--only") ? args[args.indexOf("--only") + 1] : null);
+  const brandArg =
+    args.find((a) => a.startsWith("--brand="))?.split("=")[1] ||
+    (args.includes("--brand") ? args[args.indexOf("--brand") + 1] : null);
   const quickMode = args.includes("--quick") || process.env.QUICK_EVAL === "true";
 
   let activeScenarios = scenarios;
+  if (brandArg) {
+    const targetBrand = brandArg.trim().toLowerCase();
+    activeScenarios = activeScenarios.filter((s) => (s.brandId || "aura").toLowerCase() === targetBrand);
+    console.log(`Brand filter active: Running ${activeScenarios.length} scenarios for brand '${targetBrand}'`);
+  }
   if (onlyArg) {
     const filters = onlyArg.split(",").map((f) => f.trim().toLowerCase());
-    activeScenarios = scenarios.filter((s) => filters.some((f) => s.id.toLowerCase().includes(f)));
+    activeScenarios = activeScenarios.filter((s) => filters.some((f) => s.id.toLowerCase().includes(f)));
     console.log(`Filter active: Running ${activeScenarios.length} scenarios matching [${onlyArg}]`);
   } else if (quickMode) {
-    activeScenarios = scenarios.filter(
+    activeScenarios = activeScenarios.filter(
       (s) => s.id.includes("damaged") || s.id.includes("return") || s.id.includes("cancel")
     );
     console.log(`Quick mode: Running ${activeScenarios.length} scenarios (damaged, return, cancellation)`);
-  } else {
-    console.log(`Loaded ${scenarios.length} test scenarios.`);
+  } else if (!brandArg) {
+    console.log(`Loaded ${scenarios.length} test scenarios across all brands.`);
   }
 
   console.log("\nRunning scenario evaluations (please wait)...\n");

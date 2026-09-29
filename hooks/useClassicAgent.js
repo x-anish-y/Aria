@@ -18,7 +18,7 @@
  * }
  */
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { SYSTEM_INSTRUCTION } from "@/lib/agent-config";
 import {
   AGENT_STATES,
@@ -28,9 +28,26 @@ import {
   mergeTurnFragments,
 } from "@/lib/audio/realtime-state";
 import {
+  createDecisionEvent,
+  deriveDecisionEventsFromTool,
+  classifyIntent,
+  checkTextGuardrails,
+  DECISION_KINDS,
+} from "@/lib/decision-events";
+import {
   extractSentences,
   findBestSpeechSynthesisVoice,
 } from "@/lib/audio/sentence-stream";
+import {
+  SilenceTimer,
+  SILENCE_NUDGE_MS,
+  SILENCE_ABANDON_MS,
+  GOODBYE_AUTO_END_DELAY_MS,
+  isGoodbyeIntent,
+  isUnclearAudioResponse,
+} from "@/lib/call-etiquette";
+import { CallRecorder } from "@/lib/audio/call-recorder";
+import { saveSessionRecording } from "@/lib/audio/indexeddb-audio";
 
 export function useClassicAgent(options = {}) {
   const {
@@ -38,6 +55,7 @@ export function useClassicAgent(options = {}) {
     sessionId: userSessionId = null,
     maxCallDurationMs = MAX_CALL_DURATION_MS,
     onLog = null,
+    brandId = "aura",
   } = options;
 
   // Session ID
@@ -86,6 +104,50 @@ export function useClassicAgent(options = {}) {
   const abortControllerRef = useRef(null);
   const maxCallTimerRef = useRef(null);
   const silenceTimerRef = useRef(null);
+
+  // Call Etiquette (Task 15)
+  const [isUnclearAudio, setIsUnclearAudio] = useState(false);
+  const unclearAudioTimeoutRef = useRef(null);
+  const isGoodbyePendingRef = useRef(false);
+  const goodbyeEndTimerRef = useRef(null);
+  const callResolutionRef = useRef("RESOLVED");
+
+  const triggerUnclearAudio = useCallback(() => {
+    setIsUnclearAudio(true);
+    if (unclearAudioTimeoutRef.current) clearTimeout(unclearAudioTimeoutRef.current);
+    unclearAudioTimeoutRef.current = setTimeout(() => {
+      setIsUnclearAudio(false);
+    }, 4000);
+  }, []);
+
+  // Call Recording (Task 16): Mic-only client audio recording & IndexedDB session cache
+  const callRecorderRef = useRef(null);
+  const callStartEpochRef = useRef(null);
+  const [recording, setRecording] = useState(null);
+
+  const getCallOffsetMs = useCallback(() => {
+    return callStartEpochRef.current
+      ? Math.max(0, Date.now() - callStartEpochRef.current)
+      : 0;
+  }, []);
+
+  // Sync mute state & silence timer pause/resume
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+    if (isMuted) {
+      silenceTimerRef.current?.pause();
+    } else if (state === AGENT_STATES.LISTENING) {
+      silenceTimerRef.current?.resume();
+    }
+  }, [isMuted, state]);
+
+  useEffect(() => {
+    if (state === AGENT_STATES.LISTENING && !isMutedRef.current) {
+      silenceTimerRef.current?.resume();
+    } else {
+      silenceTimerRef.current?.pause();
+    }
+  }, [state]);
 
   // Conversation history for /api/chat
   const conversationHistoryRef = useRef([]);
@@ -152,6 +214,15 @@ export function useClassicAgent(options = {}) {
       if (isStreamCompleteRef.current && stateRef.current === AGENT_STATES.SPEAKING) {
         setState(AGENT_STATES.LISTENING);
         log("Agent", "STATE_CHANGE", AGENT_STATES.LISTENING);
+
+        // Natural closing: auto-end after 2-second grace if goodbye was pending
+        if (isGoodbyePendingRef.current) {
+          if (goodbyeEndTimerRef.current) clearTimeout(goodbyeEndTimerRef.current);
+          goodbyeEndTimerRef.current = setTimeout(() => {
+            log("CallEtiquette", "GOODBYE_AUTO_END", "Classic closing auto-ended after 2s grace");
+            end("RESOLVED");
+          }, GOODBYE_AUTO_END_DELAY_MS);
+        }
       }
       return;
     }
@@ -224,6 +295,14 @@ export function useClassicAgent(options = {}) {
     // Cancel TTS & queue
     stopSpeechSynthesis();
 
+    // Reset silence timer on barge-in
+    silenceTimerRef.current?.reset();
+    if (goodbyeEndTimerRef.current) {
+      clearTimeout(goodbyeEndTimerRef.current);
+      goodbyeEndTimerRef.current = null;
+      isGoodbyePendingRef.current = false;
+    }
+
     // Abort active fetch request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -243,6 +322,17 @@ export function useClassicAgent(options = {}) {
       return prev;
     });
 
+    // Emit BARGE_IN decision event for live telemetry and Scenario 8 detection
+    const bargeEvent = createDecisionEvent({
+      kind: "BARGE_IN",
+      title: "Barge-in Interruption Detected",
+      detail: "Speech synthesis stopped immediately upon user voice activity.",
+      ruleCited: "BARGE_IN: User voice activity cut-off",
+      status: "active",
+      isBargeIn: true,
+    });
+    setToolEvents((prev) => [...prev, bargeEvent]);
+
     if (stateRef.current !== AGENT_STATES.ENDED && stateRef.current !== AGENT_STATES.ERROR) {
       setState(AGENT_STATES.LISTENING);
     }
@@ -252,9 +342,26 @@ export function useClassicAgent(options = {}) {
    * Dispatch user text into chat loop (STT final utterance or typed fallback)
    */
   const sendUserMessage = useCallback(
-    async (text) => {
+    async (text, { isSystemNudge = false } = {}) => {
       const cleanText = String(text || "").trim();
       if (!cleanText) return;
+
+      // Reset silence timer and cancel any pending goodbye auto-end
+      silenceTimerRef.current?.reset();
+      if (goodbyeEndTimerRef.current) {
+        clearTimeout(goodbyeEndTimerRef.current);
+        goodbyeEndTimerRef.current = null;
+      }
+
+      // Check goodbye intent on customer utterances
+      if (!isSystemNudge) {
+        if (isGoodbyeIntent(cleanText)) {
+          isGoodbyePendingRef.current = true;
+          log("CallEtiquette", "GOODBYE_DETECTED", cleanText);
+        } else {
+          isGoodbyePendingRef.current = false;
+        }
+      }
 
       // If agent was speaking or thinking, interrupt first
       if (
@@ -264,14 +371,23 @@ export function useClassicAgent(options = {}) {
         interrupt();
       }
 
-      // Add user turn to transcript
-      const timestamp = new Date().toLocaleTimeString();
-      setTranscript((prev) =>
-        mergeTurnFragments(prev, "user", cleanText, {
-          complete: true,
-          timestamp,
-        })
-      );
+      // Check text guardrails on user utterance
+      const guard = checkTextGuardrails(cleanText);
+      if (guard) {
+        setToolEvents((prev) => [...prev, guard]);
+      }
+
+      // Add user turn to transcript (omit raw bracketed prompt for system nudges)
+      if (!isSystemNudge) {
+        const timestamp = new Date().toLocaleTimeString();
+        setTranscript((prev) =>
+          mergeTurnFragments(prev, "user", cleanText, {
+            complete: true,
+            timestamp,
+            offsetMs: getCallOffsetMs(),
+          })
+        );
+      }
 
       // Transition to THINKING
       setState(AGENT_STATES.THINKING);
@@ -305,6 +421,7 @@ export function useClassicAgent(options = {}) {
           body: JSON.stringify({
             messages: conversationHistoryRef.current,
             sessionId,
+            brandId,
           }),
           signal: abortController.signal,
         });
@@ -354,6 +471,7 @@ export function useClassicAgent(options = {}) {
               setTranscript((prev) =>
                 mergeTurnFragments(prev, "aria", parsed.token, {
                   timestamp: new Date().toLocaleTimeString(),
+                  offsetMs: getCallOffsetMs(),
                 })
               );
 
@@ -366,12 +484,36 @@ export function useClassicAgent(options = {}) {
               }
             }
 
+            // Handle real-time tool event streaming
+            if (parsed.type === "tool_event" && parsed.event) {
+              const derived = deriveDecisionEventsFromTool(
+                parsed.event.name,
+                parsed.event.args || {},
+                parsed.event.result || {},
+                parsed.event.durationMs || 0
+              );
+              setToolEvents((prev) => [...prev, ...derived]);
+            }
+
             // Handle completion
             if (parsed.type === "done") {
               if (Array.isArray(parsed.toolEvents)) {
                 setToolEvents((prev) => {
                   const existingIds = new Set(prev.map((e) => e.id));
-                  const newEvents = parsed.toolEvents.filter((e) => !existingIds.has(e.id));
+                  const newEvents = [];
+                  for (const te of parsed.toolEvents) {
+                    const derived = deriveDecisionEventsFromTool(
+                      te.name,
+                      te.args || {},
+                      te.result || {},
+                      te.durationMs || 0
+                    );
+                    for (const d of derived) {
+                      if (!existingIds.has(d.id)) {
+                        newEvents.push(d);
+                      }
+                    }
+                  }
                   return [...prev, ...newEvents];
                 });
               }
@@ -399,6 +541,9 @@ export function useClassicAgent(options = {}) {
 
         // Record in conversation history
         if (accumulatedResponse) {
+          if (isUnclearAudioResponse(accumulatedResponse)) {
+            triggerUnclearAudio();
+          }
           conversationHistoryRef.current.push({
             role: "assistant",
             content: accumulatedResponse,
@@ -409,6 +554,14 @@ export function useClassicAgent(options = {}) {
         if (speechQueueRef.current.length === 0 && !isSpeakingSentenceRef.current) {
           setState(AGENT_STATES.LISTENING);
           log("Agent", "STATE_CHANGE", AGENT_STATES.LISTENING);
+
+          if (isGoodbyePendingRef.current) {
+            if (goodbyeEndTimerRef.current) clearTimeout(goodbyeEndTimerRef.current);
+            goodbyeEndTimerRef.current = setTimeout(() => {
+              log("CallEtiquette", "GOODBYE_AUTO_END", "Classic closing auto-ended after 2s grace");
+              end("RESOLVED");
+            }, GOODBYE_AUTO_END_DELAY_MS);
+          }
         }
       } catch (err) {
         if (err.name === "AbortError") {
@@ -514,12 +667,26 @@ export function useClassicAgent(options = {}) {
       recognition.onresult = (event) => {
         if (isMutedRef.current) return;
 
+        // Reset silence timer on any user speech and cancel pending goodbye timer
+        silenceTimerRef.current?.reset();
+        if (goodbyeEndTimerRef.current) {
+          clearTimeout(goodbyeEndTimerRef.current);
+          goodbyeEndTimerRef.current = null;
+        }
+
         let interimText = "";
         let finalText = "";
 
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const res = event.results[i];
           const transcriptPiece = res[0]?.transcript || "";
+          const confidence = res[0]?.confidence;
+
+          // Requirement 2: Low confidence speech recognition soft indicator
+          if (typeof confidence === "number" && confidence > 0 && confidence < 0.55) {
+            triggerUnclearAudio();
+          }
+
           if (res.isFinal) {
             finalText += transcriptPiece;
           } else {
@@ -545,6 +712,7 @@ export function useClassicAgent(options = {}) {
             mergeTurnFragments(prev, "user", interimText.trim(), {
               complete: false,
               timestamp: new Date().toLocaleTimeString(),
+              offsetMs: getCallOffsetMs(),
             })
           );
         }
@@ -581,6 +749,56 @@ export function useClassicAgent(options = {}) {
       recognitionRef.current = recognition;
       recognition.start();
 
+      // Set call start timestamp and start client recorder (mic only in Classic mode)
+      callStartEpochRef.current = Date.now();
+      setRecording(null);
+
+      try {
+        const recorder = new CallRecorder({
+          audioContext: audioContextRef.current,
+          micStream: micStreamRef.current,
+          mode: "classic",
+        });
+        if (recorder.start()) {
+          callRecorderRef.current = recorder;
+          log("Recording", "STARTED", "Classic audio recorder active (Mic only)");
+        }
+      } catch (recErr) {
+        console.warn("[useClassicAgent] CallRecorder start failed:", recErr);
+      }
+
+      // Start client-side silence timer
+      silenceTimerRef.current = new SilenceTimer({
+        nudgeDelayMs: SILENCE_NUDGE_MS,
+        abandonDelayMs: SILENCE_ABANDON_MS,
+        onNudge: () => {
+          if (isMutedRef.current) return;
+          if (stateRef.current !== AGENT_STATES.LISTENING) return;
+
+          log("SilenceTimer", "NUDGE", "8s customer silence reached in Classic mode. Nudging.");
+          sendUserMessage(
+            "[System note: The customer has been silent for 8 seconds. Please check in with a short, polite: \"Are you still there?\"]",
+            { isSystemNudge: true }
+          );
+        },
+        onAbandon: () => {
+          if (isMutedRef.current) return;
+
+          log("SilenceTimer", "ABANDON", "15s post-nudge silence in Classic mode. Ending as ABANDONED.");
+          callResolutionRef.current = "ABANDONED";
+
+          sendUserMessage(
+            "[System note: The customer has remained silent for 23 seconds. Say a short, polite goodbye (e.g. \"It looks like we got disconnected. Feel free to call back anytime. Goodbye!\").]",
+            { isSystemNudge: true }
+          );
+
+          setTimeout(() => {
+            end("ABANDONED");
+          }, 3500);
+        },
+      });
+      silenceTimerRef.current.start();
+
       // Start 10-minute maximum call duration timer
       maxCallTimerRef.current = setTimeout(() => {
         log("Session", "MAX_CALL_TIMEOUT", "Maximum 10-minute call duration reached");
@@ -596,53 +814,83 @@ export function useClassicAgent(options = {}) {
   /**
    * End the session and clean up all resources
    */
-  const end = useCallback(() => {
-    log("Agent", "END", "Terminating Classic Agent session");
+  const end = useCallback(
+    (resolution = "RESOLVED") => {
+      callResolutionRef.current = resolution;
+      log("Agent", "END", `Terminating Classic Agent session with resolution: ${resolution}`);
 
-    // Stop recognition
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.onend = null;
-        recognitionRef.current.stop();
-      } catch {}
-      recognitionRef.current = null;
-    }
+      // Stop recognition
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.onend = null;
+          recognitionRef.current.stop();
+        } catch {}
+        recognitionRef.current = null;
+      }
 
-    // Cancel speech synthesis
-    stopSpeechSynthesis();
+      // Cancel speech synthesis
+      stopSpeechSynthesis();
 
-    // Abort pending fetch
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
+      // Abort pending fetch
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
 
-    // Stop mic stream
-    if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach((t) => t.stop());
-      micStreamRef.current = null;
-    }
+      // Stop mic stream
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((t) => t.stop());
+        micStreamRef.current = null;
+      }
 
-    // Close AudioContext
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-    }
+      // Close AudioContext
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
 
-    // Clear timers
-    if (maxCallTimerRef.current) {
-      clearTimeout(maxCallTimerRef.current);
-      maxCallTimerRef.current = null;
-    }
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
+      // Clear timers
+      if (maxCallTimerRef.current) {
+        clearTimeout(maxCallTimerRef.current);
+        maxCallTimerRef.current = null;
+      }
+      if (silenceTimerRef.current) {
+        silenceTimerRef.current.stop();
+      }
+      if (goodbyeEndTimerRef.current) {
+        clearTimeout(goodbyeEndTimerRef.current);
+        goodbyeEndTimerRef.current = null;
+      }
+      if (unclearAudioTimeoutRef.current) {
+        clearTimeout(unclearAudioTimeoutRef.current);
+        unclearAudioTimeoutRef.current = null;
+      }
+      isGoodbyePendingRef.current = false;
+      setIsUnclearAudio(false);
 
-    setMicAnalyser(null);
-    setAgentAnalyser(null);
-    setState(AGENT_STATES.ENDED);
-  }, [log, stopSpeechSynthesis]);
+      // Finalize audio recording
+      if (callRecorderRef.current) {
+        const recorder = callRecorderRef.current;
+        callRecorderRef.current = null;
+        recorder.stop().then((rec) => {
+          if (rec) {
+            setRecording(rec);
+            saveSessionRecording(sessionId || "default-session", rec.blob, {
+              durationMs: rec.durationMs,
+              mode: "classic",
+              isClassicOnly: true,
+            });
+            log("Recording", "SAVED", `Classic recording finalized (${rec.durationMs}ms, ${rec.mimeType})`);
+          }
+        });
+      }
+
+      setMicAnalyser(null);
+      setAgentAnalyser(null);
+      setState(AGENT_STATES.ENDED);
+    },
+    [log, stopSpeechSynthesis]
+  );
 
   /**
    * Toggle or set mute state
@@ -690,14 +938,27 @@ export function useClassicAgent(options = {}) {
     };
   }, []);
 
+  const detectedIntent = useMemo(() => {
+    return classifyIntent(transcript, toolEvents);
+  }, [transcript, toolEvents]);
+
+  const clearToolEvents = useCallback(() => {
+    setToolEvents([]);
+  }, []);
+
   return {
     state,
     transcript,
     toolEvents,
+    detectedIntent,
+    clearToolEvents,
     latency,
     micAnalyser,
     agentAnalyser,
     isMuted,
+    isUnclearAudio,
+    callResolution: callResolutionRef.current,
+    recording,
     error,
     unsupportedReason,
     start,

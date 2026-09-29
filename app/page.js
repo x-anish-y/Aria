@@ -22,6 +22,7 @@ import {
   PhoneCall,
   Volume2,
   Mic,
+  MicOff,
   Package,
   RotateCcw,
   CheckCircle2,
@@ -30,6 +31,9 @@ import {
   Radio,
   History,
   ArrowLeft,
+  ArrowRight,
+  Brain,
+  ExternalLink,
 } from "lucide-react";
 import { useAgent } from "@/hooks/useAgent";
 import { Orb } from "@/components/Orb";
@@ -37,6 +41,12 @@ import { StatePill } from "@/components/StatePill";
 import { CallControls } from "@/components/CallControls";
 import { LiveTranscript } from "@/components/LiveTranscript";
 import { TestOrdersPanel } from "@/components/TestOrdersPanel";
+import { AgentBrainPanel } from "@/components/AgentBrainPanel";
+import { GuidedTourCard } from "@/components/GuidedTourCard";
+import { GUIDED_SCENARIOS, getGuidedScenariosForBrand, evaluateScenarios } from "@/lib/scenarios";
+import { getBrand, applyBrandTheme } from "@/lib/brands";
+import { buildSystemInstruction } from "@/lib/agent-config";
+import { AGENT_STATES } from "@/lib/audio/realtime-state";
 import dynamic from "next/dynamic";
 import {
   PreCallChecklist,
@@ -72,6 +82,25 @@ const HistoryDrawer = dynamic(
 export default function Home() {
   const { addToast } = useToast();
 
+  // Multi-brand state with persistence and theme CSS variable synchronization
+  const [brandId, setBrandId] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = sessionStorage.getItem("aria_brand_id");
+        if (saved === "aura" || saved === "kaveri") return saved;
+      } catch {}
+    }
+    return "aura";
+  });
+
+  const brand = useMemo(() => getBrand(brandId), [brandId]);
+  const systemInstruction = useMemo(() => buildSystemInstruction(brandId), [brandId]);
+
+  // Apply theme tokens (CSS variables) to documentElement
+  useEffect(() => {
+    applyBrandTheme(brandId);
+  }, [brandId]);
+
   // Unified Agent hook managing both Realtime and Classic modes
   const {
     mode,
@@ -81,10 +110,15 @@ export default function Home() {
     state,
     transcript,
     toolEvents,
+    detectedIntent,
+    clearToolEvents,
     latency,
     micAnalyser,
     agentAnalyser,
     isMuted,
+    isUnclearAudio,
+    callResolution,
+    recording,
     error,
     unsupportedReason,
     start,
@@ -92,14 +126,110 @@ export default function Home() {
     mute,
     sendUserMessage,
     interrupt,
+    resetSession,
     sessionId,
-  } = useAgent();
+  } = useAgent({
+    brandId,
+    systemInstruction,
+    voice: brand.voice,
+  });
+
+  const isInCall = state !== AGENT_STATES.IDLE && state !== AGENT_STATES.ENDED;
 
   const [summaryData, setSummaryData] = useState(null);
+  const [summaryCallId, setSummaryCallId] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryMetrics, setSummaryMetrics] = useState(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [selectedHistoryCall, setSelectedHistoryCall] = useState(null);
+  const [isBrainOpen, setIsBrainOpen] = useState(false);
+  const [rightPanelTab, setRightPanelTab] = useState("tour"); // "tour" | "orders" | "brain"
+
+  // ── Guided Tour Evaluator Progress & Session Persistence (Per Brand) ──
+  const brandScenarios = useMemo(() => getGuidedScenariosForBrand(brandId), [brandId]);
+  const tourStorageKey = `aria_guided_tour_${brandId}_${sessionId || "default"}`;
+  const [persistedTourPassed, setPersistedTourPassed] = useState({});
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = sessionStorage.getItem(tourStorageKey);
+      if (stored) {
+        setPersistedTourPassed(JSON.parse(stored));
+      } else {
+        setPersistedTourPassed({});
+      }
+    } catch {}
+  }, [tourStorageKey]);
+
+  // Pure function evaluation from real toolEvents & guardrail signals
+  const tourEvaluation = useMemo(() => {
+    return evaluateScenarios(brandScenarios, toolEvents);
+  }, [brandScenarios, toolEvents]);
+
+  // Total passed count combining live evaluation and session persistence
+  const tourPassedCount = useMemo(() => {
+    let count = 0;
+    brandScenarios.forEach((sc) => {
+      if (persistedTourPassed[sc.id] || tourEvaluation.results[sc.id]) {
+        count++;
+      }
+    });
+    return count;
+  }, [brandScenarios, persistedTourPassed, tourEvaluation.results]);
+
+  // Brand Switcher handler (enforces disallowing mid-call)
+  const handleSwitchBrand = useCallback(
+    (newBrandId) => {
+      if (newBrandId === brandId) return;
+
+      if (isInCall) {
+        addToast?.({
+          message: "Brand switching is locked during an active call. Please end the call first.",
+          type: "warning",
+        });
+        return;
+      }
+
+      setBrandId(newBrandId);
+      if (typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem("aria_brand_id", newBrandId);
+        } catch {}
+      }
+
+      applyBrandTheme(newBrandId);
+      const newBrand = getBrand(newBrandId);
+
+      // Start fresh session and clear call-state for fresh brand session
+      resetSession();
+      clearToolEvents();
+      setPersistedTourPassed({});
+      setSummaryData(null);
+      setSummaryCallId(null);
+      setSummaryMetrics(null);
+
+      addToast?.({
+        message: `Switched brand to ${newBrand.name} (${newBrand.persona_name})`,
+        type: "info",
+      });
+    },
+    [brandId, isInCall, addToast, resetSession, clearToolEvents]
+  );
+
+  // Synchronize reset when "Reset demo data" is clicked
+  useEffect(() => {
+    const handleResetEvent = (e) => {
+      if (!e.detail?.sessionId || e.detail.sessionId === sessionId) {
+        setPersistedTourPassed({});
+        try {
+          sessionStorage.removeItem(tourStorageKey);
+        } catch {}
+      }
+    };
+    window.addEventListener("aria:reset-tour", handleResetEvent);
+    return () => window.removeEventListener("aria:reset-tour", handleResetEvent);
+  }, [sessionId, tourStorageKey]);
 
   // ── System Health & Degradation State ──────────────────────────────
   const [healthStatus, setHealthStatus] = useState(null);
@@ -172,12 +302,6 @@ export default function Home() {
   const callStartTimeRef = useRef(null);
   const hasFetchedSummaryRef = useRef(false);
 
-  const isInCall =
-    state === "connecting" ||
-    state === "listening" ||
-    state === "thinking" ||
-    state === "speaking";
-
   // Track start time when entering a call
   useEffect(() => {
     if (isInCall && !callStartTimeRef.current) {
@@ -222,10 +346,14 @@ export default function Home() {
           metrics: metricsPayload,
           startedAt: new Date(startMs).toISOString(),
           endedAt: new Date(endMs).toISOString(),
+          resolution: callResolution || "RESOLVED",
         }),
       })
         .then((res) => res.json())
         .then((data) => {
+          if (data.callId) {
+            setSummaryCallId(data.callId);
+          }
           if (data.ok && data.summary) {
             setSummaryData(data.summary);
             addToast({ message: "Post-call evaluation recorded", type: "success" });
@@ -247,6 +375,7 @@ export default function Home() {
     callStartTimeRef.current = Date.now();
     hasFetchedSummaryRef.current = false;
     setSelectedHistoryCall(null);
+    setSummaryCallId(null);
     playCallStartCue();
     await start();
   }, [start]);
@@ -261,6 +390,7 @@ export default function Home() {
     setSummaryData(null);
     setSelectedHistoryCall(null);
     setSummaryMetrics(null);
+    setSummaryCallId(null);
     callStartTimeRef.current = Date.now();
     hasFetchedSummaryRef.current = false;
     playCallStartCue();
@@ -314,9 +444,23 @@ export default function Home() {
       {/* Offline banner detection */}
       <OfflineBanner />
 
-      {/* ── Header ─────────────────────────────────────────── */}
-      {/* ── Header with Animated Active Navigation ─────────── */}
-      <Navbar mode={mode} onOpenHistory={() => setIsHistoryOpen(true)} />
+      {/* ── Header with Animated Active Navigation & Guided Tour Ring ── */}
+      <Navbar
+        mode={mode}
+        activeBrandId={brandId}
+        onSwitchBrand={handleSwitchBrand}
+        isInCall={isInCall}
+        onOpenHistory={() => setIsHistoryOpen(true)}
+        onOpenBrain={() => setIsBrainOpen(true)}
+        brainEventsCount={toolEvents.length}
+        onOpenTour={() => {
+          setRightPanelTab("tour");
+          const el = document.getElementById("guided-tour-card");
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }}
+        tourPassedCount={tourPassedCount}
+        tourTotalCount={brandScenarios.length}
+      />
 
       {/* ── System Banners / Notifications ─────────────────── */}
       <AnimatePresence>
@@ -368,6 +512,31 @@ export default function Home() {
               className="text-[11px] text-on-surface-muted hover:text-ivory underline ml-2"
             >
               Dismiss
+            </button>
+          </motion.div>
+        )}
+
+        {/* Muted Mic Banner (Requirement 4) */}
+        {isInCall && isMuted && (
+          <motion.div
+            key="muted-mic-banner"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="w-full bg-rose-500/20 border-b border-rose-500/40 text-rose-200 px-4 py-2.5 text-xs flex items-center justify-between z-20 backdrop-blur-sm flex-wrap gap-2"
+          >
+            <div className="flex items-center gap-2">
+              <MicOff className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>
+                <strong className="font-semibold mr-1">Microphone is muted:</strong>
+                Aria cannot hear you. Silence detection paused.
+              </span>
+            </div>
+            <button
+              onClick={() => mute(false)}
+              className="px-3 py-1 rounded-full bg-rose-500/30 hover:bg-rose-500/50 text-rose-100 text-[11px] font-medium transition-colors border border-rose-500/40"
+            >
+              Unmute (M)
             </button>
           </motion.div>
         )}
@@ -433,6 +602,8 @@ export default function Home() {
               <PostCallSummary
                 summary={selectedHistoryCall ? selectedHistoryCall.summary : summaryData}
                 loading={!selectedHistoryCall && summaryLoading}
+                callId={selectedHistoryCall ? selectedHistoryCall.id : summaryCallId}
+                recording={recording}
                 metrics={
                   selectedHistoryCall
                     ? selectedHistoryCall.metrics || {
@@ -491,9 +662,23 @@ export default function Home() {
                     }}
                   />
 
-                  {/* State Pill Header */}
-                  <div className="mb-4 z-10">
+                  {/* State Pill Header & Unclear Audio Soft Indicator */}
+                  <div className="mb-3 z-10 flex flex-col items-center gap-2">
                     <StatePill state={state} />
+                    <AnimatePresence>
+                      {isUnclearAudio && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -6, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -6, scale: 0.95 }}
+                          transition={springGentle}
+                          className="flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-200 text-xs shadow-md"
+                        >
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 animate-pulse" />
+                          <span className="font-medium">Didn&apos;t catch that — please speak clearly or repeat</span>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
 
                   {/* The Real-Time Audio-Reactive Orb */}
@@ -517,17 +702,17 @@ export default function Home() {
                         className="text-xs text-on-surface-muted leading-relaxed font-sans"
                       >
                         {state === "idle" &&
-                          "Press the gold button or Spacebar to start your conversation with Aria."}
+                          `Press the gold button or Spacebar to start your conversation with ${brand.persona_name || "Aria"}.`}
                         {state === "connecting" &&
                           "Establishing low-latency encrypted audio connection..."}
                         {state === "listening" &&
                           (isMuted
                             ? "Microphone is muted. Click unmute or press M to speak."
-                            : "Aria is listening. Speak your question or order number naturally.")}
+                            : `${brand.persona_name || "Aria"} is listening. Speak your question or order number naturally.`)}
                         {state === "thinking" &&
-                          "Consulting Aura policy and checking customer records..."}
+                          `Consulting ${brand.name} policy and checking customer records...`}
                         {state === "speaking" &&
-                          "Aria is responding. You can speak anytime to interrupt (barge-in)."}
+                          `${brand.persona_name || "Aria"} is responding. You can speak anytime to interrupt (barge-in).`}
                         {state === "ended" &&
                           "Conversation concluded. Click below to start a new consultation."}
                         {state === "error" &&
@@ -564,29 +749,171 @@ export default function Home() {
                   />
                 </div>
 
-                {/* Pre-Call Checklist (visible when idle or ended) */}
+                {/* Pre-Call Quick Actions & Checklist (visible when idle or ended) */}
                 {!isInCall && (
-                  <motion.div variants={fadeUp} initial="hidden" animate="visible">
+                  <motion.div variants={fadeUp} initial="hidden" animate="visible" className="space-y-4">
+                    {/* "Take the 3-minute tour" Quick Evaluator Callout Banner */}
+                    <motion.button
+                      whileHover={hoverLift}
+                      whileTap={tapScale}
+                      onClick={() => {
+                        setRightPanelTab("tour");
+                        const el = document.getElementById("guided-tour-card");
+                        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                      className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-primary/15 via-surface-container to-secondary/15 border border-primary/30 flex items-center justify-between text-left hover:border-primary/60 transition-all shadow-md group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-primary/20 border border-primary/40 flex items-center justify-center text-primary-light shrink-0 group-hover:scale-105 transition-transform">
+                          <Sparkles className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-ivory flex items-center gap-2">
+                            <span>Take the 3-Minute Evaluator Tour</span>
+                            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-secondary/20 text-secondary-light border border-secondary/30">
+                              {tourPassedCount}/8 Passed
+                            </span>
+                          </p>
+                          <p className="text-[11px] text-on-surface-muted">
+                            Validate order tracking, cancellation policies, returns, guardrails & barge-in
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 text-primary-light text-xs font-semibold shrink-0">
+                        <span className="hidden sm:inline">Start Tour</span>
+                        <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                      </div>
+                    </motion.button>
+
                     <PreCallChecklist />
                   </motion.div>
                 )}
               </section>
 
-              {/* Right Stage: Interactive Test Orders & Prompts (5 Cols on Desktop) */}
-              <section className="lg:col-span-5 w-full">
-                <TestOrdersPanel
-                  sessionId={sessionId}
-                  lastToolEvent={lastToolEvent}
-                  onSelectPrompt={handleSelectPrompt}
-                  onToast={(msg, type) =>
-                    addToast({ message: msg, type: type || "info" })
-                  }
-                />
+              {/* Right Stage: Guided Test Tour / Test Orders / Agent Brain */}
+              <section className="lg:col-span-5 w-full flex flex-col gap-3">
+                {/* Responsive Tab Switcher (Tour vs Orders vs Brain) */}
+                <div className="flex items-center justify-between p-1 rounded-2xl bg-surface-container/80 border border-outline-variant/25 shadow-inner">
+                  <div className="flex items-center gap-1 w-full">
+                    {/* Guided Tour Tab */}
+                    <button
+                      onClick={() => setRightPanelTab("tour")}
+                      className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                        rightPanelTab === "tour"
+                          ? "bg-surface-highest text-ivory border border-primary/40 shadow-sm"
+                          : "text-on-surface-muted hover:text-ivory"
+                      }`}
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-primary-light" />
+                      <span className="truncate">Guided Tour</span>
+                      <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-primary/20 text-primary-light border border-primary/30">
+                        {tourPassedCount}/{brandScenarios.length}
+                      </span>
+                    </button>
+
+                    {/* Test Orders Tab */}
+                    <button
+                      onClick={() => setRightPanelTab("orders")}
+                      className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                        rightPanelTab === "orders"
+                          ? "bg-surface-highest text-ivory border border-outline-variant/30 shadow-sm"
+                          : "text-on-surface-muted hover:text-ivory"
+                      }`}
+                    >
+                      <Package className="w-3.5 h-3.5 text-secondary-light" />
+                      <span className="truncate">Test Orders</span>
+                      <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-white/10 text-on-surface-muted">
+                        {brand.testOrders?.length || 3}
+                      </span>
+                    </button>
+
+                    {/* Agent Brain Tab */}
+                    <button
+                      onClick={() => setRightPanelTab("brain")}
+                      className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+                        rightPanelTab === "brain"
+                          ? "bg-surface-highest text-ivory border border-primary/40 shadow-sm"
+                          : "text-on-surface-muted hover:text-ivory"
+                      }`}
+                    >
+                      <Brain className="w-3.5 h-3.5 text-primary animate-pulse" />
+                      <span className="truncate">Brain</span>
+                      {toolEvents.length > 0 && (
+                        <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-primary text-black font-bold">
+                          {toolEvents.length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Pop out drawer button for desktop */}
+                  <button
+                    onClick={() => setIsBrainOpen(true)}
+                    title="Open full Agent Brain side drawer"
+                    className="p-1.5 rounded-xl text-on-surface-muted hover:text-ivory hover:bg-white/5 transition-colors ml-1 shrink-0"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {rightPanelTab === "tour" ? (
+                  <GuidedTourCard
+                    brandId={brandId}
+                    events={toolEvents}
+                    sessionId={sessionId}
+                    latency={latency}
+                    onSelectPrompt={handleSelectPrompt}
+                    onToast={(msg, type) =>
+                      addToast({ message: msg, type: type || "info" })
+                    }
+                  />
+                ) : rightPanelTab === "orders" ? (
+                  <>
+                    <GuidedTourCard
+                      brandId={brandId}
+                      events={toolEvents}
+                      sessionId={sessionId}
+                      latency={latency}
+                      onSelectPrompt={handleSelectPrompt}
+                      onToast={(msg, type) =>
+                        addToast({ message: msg, type: type || "info" })
+                      }
+                      isInitiallyCollapsed={true}
+                    />
+                    <TestOrdersPanel
+                      brandId={brandId}
+                      sessionId={sessionId}
+                      lastToolEvent={lastToolEvent}
+                      onSelectPrompt={handleSelectPrompt}
+                      onToast={(msg, type) =>
+                        addToast({ message: msg, type: type || "info" })
+                      }
+                    />
+                  </>
+                ) : (
+                  <AgentBrainPanel
+                    events={toolEvents}
+                    detectedIntent={detectedIntent}
+                    latency={latency}
+                    onClear={clearToolEvents}
+                    isMobileTab={true}
+                  />
+                )}
               </section>
             </motion.div>
           )}
         </AnimatePresence>
       </main>
+
+      {/* ── Agent Brain Side Drawer (Desktop & Mobile Pop-out) ─ */}
+      <AgentBrainPanel
+        isOpen={isBrainOpen}
+        onClose={() => setIsBrainOpen(false)}
+        events={toolEvents}
+        detectedIntent={detectedIntent}
+        latency={latency}
+        onClear={clearToolEvents}
+      />
 
       {/* ── Call History Drawer ────────────────────────────── */}
       <HistoryDrawer

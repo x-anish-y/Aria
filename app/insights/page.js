@@ -39,6 +39,7 @@ import {
   Cpu,
   Radio,
   ArrowRight,
+  Award,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { Navbar } from "@/components/Navbar";
@@ -58,6 +59,10 @@ const CallsTrendAreaChart = dynamic(
 );
 const LatencyHistogramChart = dynamic(
   () => import("@/components/InsightsCharts").then((m) => m.LatencyHistogramChart),
+  { ssr: false }
+);
+const QATrendLineChart = dynamic(
+  () => import("@/components/InsightsCharts").then((m) => m.QATrendLineChart),
   { ssr: false }
 );
 import { Badge } from "@/components/ui";
@@ -374,6 +379,97 @@ export default function InsightsPage() {
               </div>
             </motion.section>
 
+            {/* ── 1.5 QA Scorecard KPI Summary Bar (Task 17) ─────────── */}
+            {data.qaAverages && (
+              <motion.section
+                variants={staggerItem}
+                className="p-5 sm:p-6 rounded-3xl bg-surface-container/70 border border-outline-variant/20 backdrop-blur-xl shadow-lg"
+              >
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-primary-light">
+                      <Award className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-mono text-xs uppercase tracking-wider text-ivory font-semibold">
+                          Automated QA Quality & Compliance Benchmarks
+                        </h3>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          {data.qaAverages.evaluatedCallsCount || data.totalCalls} Calls Audited
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-on-surface-muted">
+                        Evaluated across policy adherence, information accuracy, and tone
+                      </span>
+                    </div>
+                  </div>
+
+                  {data.qaAverages.flaggedCount > 0 ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      {data.qaAverages.flaggedCount} Flagged Call{data.qaAverages.flaggedCount === 1 ? "" : "s"}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Zero Flagged Promises
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-1">
+                  <div className="p-3.5 rounded-2xl bg-black/25 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-mono text-on-surface-muted uppercase">Overall QA</span>
+                    <div className="font-mono text-xl font-bold text-emerald-400 mt-1">
+                      {data.qaAverages.overallScore} <span className="text-xs text-on-surface-muted font-normal">/ 5.0</span>
+                    </div>
+                    <span className="text-[10px] text-on-surface-muted">composite score</span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-black/25 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-mono text-on-surface-muted uppercase">Policy Adherence</span>
+                    <div className="font-mono text-xl font-bold text-ivory mt-1">
+                      {data.qaAverages.policyAdherence} <span className="text-xs text-on-surface-muted font-normal">/ 5.0</span>
+                    </div>
+                    <span className="text-[10px] text-on-surface-muted">return & cancel rules</span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-black/25 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-mono text-on-surface-muted uppercase">Info Accuracy</span>
+                    <div className="font-mono text-xl font-bold text-ivory mt-1">
+                      {data.qaAverages.accuracy} <span className="text-xs text-on-surface-muted font-normal">/ 5.0</span>
+                    </div>
+                    <span className="text-[10px] text-on-surface-muted">grounded in tools</span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-black/25 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-mono text-on-surface-muted uppercase">Empathy & Tone</span>
+                    <div className="font-mono text-xl font-bold text-ivory mt-1">
+                      {data.qaAverages.empathy} <span className="text-xs text-on-surface-muted font-normal">/ 5.0</span>
+                    </div>
+                    <span className="text-[10px] text-on-surface-muted">courtesy & warmth</span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-black/25 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-mono text-on-surface-muted uppercase">Conciseness</span>
+                    <div className="font-mono text-xl font-bold text-ivory mt-1">
+                      {data.qaAverages.conciseness} <span className="text-xs text-on-surface-muted font-normal">/ 5.0</span>
+                    </div>
+                    <span className="text-[10px] text-on-surface-muted">turn brevity</span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-black/25 border border-white/5 flex flex-col justify-between">
+                    <span className="text-[10px] font-mono text-on-surface-muted uppercase">Resolution</span>
+                    <div className="font-mono text-xl font-bold text-ivory mt-1">
+                      {data.qaAverages.resolution} <span className="text-xs text-on-surface-muted font-normal">/ 5.0</span>
+                    </div>
+                    <span className="text-[10px] text-on-surface-muted">outcome achieved</span>
+                  </div>
+                </div>
+              </motion.section>
+            )}
+
             {/* ── 2. Primary Charts Grid (Donut & Bar) ────────────────── */}
             <motion.section
               variants={staggerItem}
@@ -395,16 +491,104 @@ export default function InsightsPage() {
               variants={staggerItem}
               className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch"
             >
-              {/* Line / Area: Daily Calls Trend (7 Cols) */}
-              <div className="lg:col-span-7 h-full">
+              {/* Line / Area: Daily Calls Trend (6 Cols) */}
+              <div className="lg:col-span-6 h-full">
                 <CallsTrendAreaChart data={data.callsPerDay} />
               </div>
 
-              {/* Histogram: Latency Distribution (5 Cols) */}
-              <div className="lg:col-span-5 h-full">
-                <LatencyHistogramChart data={data.latencyHistogram} />
+              {/* Line / Area: QA Quality Score Trend (6 Cols) (Task 17) */}
+              <div className="lg:col-span-6 h-full">
+                <QATrendLineChart data={data.qaTrend} />
               </div>
             </motion.section>
+
+            {/* ── 3.5 Latency Distribution Histogram ─────────────────── */}
+            <motion.section variants={staggerItem}>
+              <LatencyHistogramChart data={data.latencyHistogram} />
+            </motion.section>
+
+            {/* ── 3.8 Flagged Calls Audit List (Task 17) ─────────────── */}
+            {data.flaggedCalls && data.flaggedCalls.length > 0 && (
+              <motion.section
+                variants={staggerItem}
+                className="rounded-3xl p-6 sm:p-8 bg-rose-500/[0.04] border border-rose-500/30 backdrop-blur-xl shadow-lg"
+              >
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-300">
+                      <AlertTriangle className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="font-serif text-xl font-medium text-rose-100 tracking-tight">
+                        Flagged Calls Audit
+                      </h3>
+                      <p className="text-xs text-rose-200/80">
+                        Calls flagged for ungrounded verbal guarantees or policy overrides
+                      </p>
+                    </div>
+                  </div>
+                  <span className="px-3 py-1 rounded-full text-xs font-mono font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                    {data.flaggedCalls.length} Call{data.flaggedCalls.length === 1 ? "" : "s"} Requiring Review
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  {data.flaggedCalls.map((fc) => (
+                    <div
+                      key={fc.id}
+                      className="p-4 rounded-2xl bg-black/40 border border-rose-500/30 flex flex-col md:flex-row md:items-center justify-between gap-3"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <code className="text-xs font-mono font-semibold text-rose-300 bg-rose-500/20 px-2 py-0.5 rounded border border-rose-500/30">
+                            {fc.id}
+                          </code>
+                          <span className="text-xs text-on-surface-muted font-mono">
+                            {new Date(fc.startedAt).toLocaleDateString([], {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                          <span className="text-xs px-2 py-0.5 rounded bg-surface-highest/60 text-ivory font-mono">
+                            {fc.customerIntent}
+                          </span>
+                          {fc.orderId && (
+                            <span className="text-xs text-primary font-mono">
+                              {fc.orderId}
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-xs text-rose-200/90 italic font-sans mt-1">
+                          &ldquo;{fc.coachingNote}&rdquo;
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right">
+                          <span className="text-[10px] text-on-surface-muted uppercase font-mono block">
+                            Policy Score
+                          </span>
+                          <span className="font-mono text-sm font-bold text-rose-400">
+                            {fc.qaScores?.policyAdherence || 1} / 5
+                          </span>
+                        </div>
+
+                        <Link
+                          href={`/call/${fc.id}`}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-mono bg-rose-500/20 text-rose-200 hover:bg-rose-500/30 border border-rose-500/40 transition-colors"
+                        >
+                          <span>Audit Report</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </Link>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </motion.section>
+            )}
 
             {/* ── 4. Recent Calls Table with Row Hover & Detail Modal ─── */}
             <motion.section

@@ -18,7 +18,7 @@
  * 4. One automatic reconnect attempt on unexpected socket drops
  */
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { SYSTEM_INSTRUCTION, toGeminiTools } from "@/lib/agent-config";
 import { Pcm16Player } from "@/lib/audio/player";
 import {
@@ -27,6 +27,23 @@ import {
   mergeTurnFragments,
   RealtimeAgentStateMachine,
 } from "@/lib/audio/realtime-state";
+import {
+  createDecisionEvent,
+  deriveDecisionEventsFromTool,
+  classifyIntent,
+  checkTextGuardrails,
+  DECISION_KINDS,
+} from "@/lib/decision-events";
+import {
+  SilenceTimer,
+  SILENCE_NUDGE_MS,
+  SILENCE_ABANDON_MS,
+  GOODBYE_AUTO_END_DELAY_MS,
+  isGoodbyeIntent,
+  isUnclearAudioResponse,
+} from "@/lib/call-etiquette";
+import { CallRecorder } from "@/lib/audio/call-recorder";
+import { saveSessionRecording } from "@/lib/audio/indexeddb-audio";
 
 /**
  * Fast ArrayBuffer to Base64 conversion (8KB chunks)
@@ -52,6 +69,8 @@ export function useRealtimeAgent(options = {}) {
     sessionId: userSessionId = null,
     maxCallDurationMs = MAX_CALL_DURATION_MS,
     onLog = null,
+    brandId = "aura",
+    voice = null,
   } = options;
 
   // Session ID — deferred to client to avoid hydration mismatch from Math.random()
@@ -110,9 +129,37 @@ export function useRealtimeAgent(options = {}) {
   const isConnectingRef = useRef(false);
   const lastUserSpeechTimeRef = useRef(null);
 
+  // Call Etiquette (Task 15): Silence timer, goodbye auto-end, unclear audio
+  const [isUnclearAudio, setIsUnclearAudio] = useState(false);
+  const unclearAudioTimeoutRef = useRef(null);
+  const silenceTimerRef = useRef(null);
+  const isGoodbyePendingRef = useRef(false);
+  const goodbyeEndTimerRef = useRef(null);
+  const callResolutionRef = useRef("RESOLVED");
+
+  const triggerUnclearAudio = useCallback(() => {
+    setIsUnclearAudio(true);
+    if (unclearAudioTimeoutRef.current) clearTimeout(unclearAudioTimeoutRef.current);
+    unclearAudioTimeoutRef.current = setTimeout(() => {
+      setIsUnclearAudio(false);
+    }, 4000);
+  }, []);
+
+  // Call Recording (Task 16): Mixed client audio recording & IndexedDB session cache
+  const callRecorderRef = useRef(null);
+  const callStartEpochRef = useRef(null);
+  const [recording, setRecording] = useState(null);
+
+  const getCallOffsetMs = useCallback(() => {
+    return callStartEpochRef.current
+      ? Math.max(0, Date.now() - callStartEpochRef.current)
+      : 0;
+  }, []);
+
   // Audio generation counter: incremented on each barge-in / interruption.
   // Chunks from a previous generation are discarded.
   const audioGenRef = useRef(0);
+  const lastUserSpeechTextRef = useRef("");
 
   // Timers
   const maxCallTimerRef = useRef(null);
@@ -130,10 +177,24 @@ export function useRealtimeAgent(options = {}) {
     [onLog]
   );
 
-  // Sync mute state
+  // Sync mute state & silence timer pause/resume
   useEffect(() => {
     isMutedRef.current = isMuted;
-  }, [isMuted]);
+    if (isMuted) {
+      silenceTimerRef.current?.pause();
+    } else if (state === AGENT_STATES.LISTENING) {
+      silenceTimerRef.current?.resume();
+    }
+  }, [isMuted, state]);
+
+  // Pause silence timer whenever agent is speaking, thinking, or not listening
+  useEffect(() => {
+    if (state === AGENT_STATES.LISTENING && !isMutedRef.current) {
+      silenceTimerRef.current?.resume();
+    } else {
+      silenceTimerRef.current?.pause();
+    }
+  }, [state]);
 
   // 10 Hz batched transcript flushing (prevents React UI thread starvation)
   useEffect(() => {
@@ -189,6 +250,35 @@ export function useRealtimeAgent(options = {}) {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
+      }
+      if (silenceTimerRef.current) {
+        silenceTimerRef.current.stop();
+      }
+      if (goodbyeEndTimerRef.current) {
+        clearTimeout(goodbyeEndTimerRef.current);
+        goodbyeEndTimerRef.current = null;
+      }
+      if (unclearAudioTimeoutRef.current) {
+        clearTimeout(unclearAudioTimeoutRef.current);
+        unclearAudioTimeoutRef.current = null;
+      }
+      isGoodbyePendingRef.current = false;
+      setIsUnclearAudio(false);
+
+      // Finalize client-side audio recording
+      if (callRecorderRef.current) {
+        const recorder = callRecorderRef.current;
+        callRecorderRef.current = null;
+        recorder.stop().then((rec) => {
+          if (rec) {
+            setRecording(rec);
+            saveSessionRecording(sessionId || "default-session", rec.blob, {
+              durationMs: rec.durationMs,
+              mode: "realtime",
+            });
+            log("Recording", "SAVED", `Recording finalized (${rec.durationMs}ms, ${rec.mimeType})`);
+          }
+        });
       }
 
       // Stop mic tracks
@@ -359,6 +449,7 @@ export function useRealtimeAgent(options = {}) {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 sessionId,
+                brandId,
                 args: fnCall.args || {},
               }),
             });
@@ -371,19 +462,18 @@ export function useRealtimeAgent(options = {}) {
             result = { error: err.message };
           }
 
-          const eventRecord = {
-            id: fnCall.id || "tool-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
-            name: fnCall.name,
-            args: fnCall.args,
+          const decisionEvents = deriveDecisionEventsFromTool(
+            fnCall.name,
+            fnCall.args || {},
             result,
-            durationMs,
-            timestamp: new Date().toLocaleTimeString(),
-          };
+            durationMs
+          );
 
-          setToolEvents((prev) => [...prev, eventRecord]);
+          setToolEvents((prev) => [...prev, ...decisionEvents]);
           log("ToolLoop", "TOOL_RESULT", {
             name: fnCall.name,
             durationMs,
+            eventsCount: decisionEvents.length,
             resultSummary: result?.found ? `Found ${result.order?.order_id}` : result?.message || result,
           });
 
@@ -431,6 +521,15 @@ export function useRealtimeAgent(options = {}) {
         player.onPlaybackEnded = () => {
           smRef.current.onAgentAudioEnded();
           syncState();
+
+          // Natural closing: auto-end after 2s grace period if goodbye was pending
+          if (isGoodbyePendingRef.current) {
+            if (goodbyeEndTimerRef.current) clearTimeout(goodbyeEndTimerRef.current);
+            goodbyeEndTimerRef.current = setTimeout(() => {
+              log("CallEtiquette", "GOODBYE_AUTO_END", "Auto-ending call after 2-second grace following goodbye intent.");
+              end("RESOLVED");
+            }, GOODBYE_AUTO_END_DELAY_MS);
+          }
         };
         playerRef.current = player;
         setAgentAnalyser(player.analyser);
@@ -498,6 +597,87 @@ export function useRealtimeAgent(options = {}) {
           smRef.current.onSetupComplete();
           syncState();
 
+          // Reset recording & set call start timestamp for per-turn offset tracking
+          callStartEpochRef.current = Date.now();
+          setRecording(null);
+
+          // Initialize client-side mixed audio recorder (Mic + Aria 24kHz)
+          try {
+            const recorder = new CallRecorder({
+              audioContext: micContextRef.current,
+              micStream: micStreamRef.current,
+              player: playerRef.current,
+              mode: "realtime",
+            });
+            if (recorder.start()) {
+              callRecorderRef.current = recorder;
+              log("Recording", "STARTED", "Mixed audio recorder active (Mic + Aria 24kHz)");
+            }
+          } catch (recErr) {
+            console.warn("[useRealtimeAgent] CallRecorder start failed:", recErr);
+          }
+
+          // Initialize client-side silence timer
+          silenceTimerRef.current = new SilenceTimer({
+            nudgeDelayMs: SILENCE_NUDGE_MS,
+            abandonDelayMs: SILENCE_ABANDON_MS,
+            onNudge: () => {
+              if (isMutedRef.current) return;
+              if (smRef.current.state !== AGENT_STATES.LISTENING) return;
+              if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+              log("SilenceTimer", "NUDGE", "8s customer silence while listening. Sending nudge turn.");
+              wsRef.current.send(
+                JSON.stringify({
+                  clientContent: {
+                    turns: [
+                      {
+                        role: "user",
+                        parts: [
+                          {
+                            text: "[System note: The customer has been silent for 8 seconds. Please check in with a short, polite: \"Are you still there?\"]",
+                          },
+                        ],
+                      },
+                    ],
+                    turnComplete: true,
+                  },
+                })
+              );
+            },
+            onAbandon: () => {
+              if (isMutedRef.current) return;
+              if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+              log("SilenceTimer", "ABANDON", "15s post-nudge silence (23s total). Saying polite goodbye and ending as ABANDONED.");
+              callResolutionRef.current = "ABANDONED";
+
+              wsRef.current.send(
+                JSON.stringify({
+                  clientContent: {
+                    turns: [
+                      {
+                        role: "user",
+                        parts: [
+                          {
+                            text: "[System note: The customer has remained silent for 23 seconds. Say a short, polite goodbye (e.g. \"It looks like we got disconnected. Feel free to call back anytime. Goodbye!\").]",
+                          },
+                        ],
+                      },
+                    ],
+                    turnComplete: true,
+                  },
+                })
+              );
+
+              // Auto-end after a short grace allowing goodbye delivery
+              setTimeout(() => {
+                end("ABANDONED");
+              }, 3500);
+            },
+          });
+          silenceTimerRef.current.start();
+
           // 10-minute max call timer
           if (maxCallTimerRef.current) clearTimeout(maxCallTimerRef.current);
           maxCallTimerRef.current = setTimeout(() => {
@@ -553,35 +733,65 @@ export function useRealtimeAgent(options = {}) {
                 smRef.current.onInterrupted();
                 syncState();
 
+                // Interruption resets silence timer and cancels any pending auto-end
+                silenceTimerRef.current?.reset();
+                if (goodbyeEndTimerRef.current) {
+                  clearTimeout(goodbyeEndTimerRef.current);
+                  goodbyeEndTimerRef.current = null;
+                  isGoodbyePendingRef.current = false;
+                }
+
                 pendingFragmentsQueueRef.current.push({
                   speaker: "aria",
                   fragment: "",
                   options: { complete: true, interrupted: true },
                 });
+
+                // Emit BARGE_IN decision event for live telemetry and Scenario 8 detection
+                const bargeEvent = createDecisionEvent({
+                  kind: "BARGE_IN",
+                  title: "Barge-in Interruption Detected",
+                  detail: "Agent speech immediately aborted upon user voice activity.",
+                  ruleCited: "BARGE_IN: START_OF_ACTIVITY_INTERRUPTS",
+                  status: "active",
+                  isBargeIn: true,
+                });
+                setToolEvents((prev) => [...prev, bargeEvent]);
                 return;
               }
 
               // User speech transcription fragment
               if (sc.inputTranscription?.text) {
                 const textFrag = sc.inputTranscription.text;
+                lastUserSpeechTextRef.current += (lastUserSpeechTextRef.current ? " " : "") + textFrag;
                 lastUserSpeechTimeRef.current = performance.now();
                 smRef.current.onUserSpeechStart();
                 syncState();
 
+                // Any user speech resets silence timer and cancels pending goodbye end
+                silenceTimerRef.current?.reset();
+                if (goodbyeEndTimerRef.current) {
+                  clearTimeout(goodbyeEndTimerRef.current);
+                  goodbyeEndTimerRef.current = null;
+                }
+
                 pendingFragmentsQueueRef.current.push({
                   speaker: "user",
                   fragment: textFrag,
-                  options: {},
+                  options: { offsetMs: getCallOffsetMs() },
                 });
               }
 
               // Model output transcription fragment
               if (sc.outputTranscription?.text) {
                 const textFrag = sc.outputTranscription.text;
+                if (isUnclearAudioResponse(textFrag)) {
+                  triggerUnclearAudio();
+                }
                 pendingFragmentsQueueRef.current.push({
                   speaker: "aria",
                   fragment: textFrag,
-                  options: {},
+                  options: { offsetMs: getCallOffsetMs() },
                 });
               }
 
@@ -611,10 +821,13 @@ export function useRealtimeAgent(options = {}) {
                   }
 
                   if (part.text) {
+                    if (isUnclearAudioResponse(part.text)) {
+                      triggerUnclearAudio();
+                    }
                     pendingFragmentsQueueRef.current.push({
                       speaker: "aria",
                       fragment: part.text,
-                      options: {},
+                      options: { offsetMs: getCallOffsetMs() },
                     });
                   }
                 }
@@ -626,6 +839,22 @@ export function useRealtimeAgent(options = {}) {
 
               // Turn complete
               if (sc.turnComplete) {
+                // Check if completed user utterance triggered safety guardrails, policy limits, or goodbye intent
+                if (lastUserSpeechTextRef.current) {
+                  if (isGoodbyeIntent(lastUserSpeechTextRef.current)) {
+                    isGoodbyePendingRef.current = true;
+                    log("CallEtiquette", "GOODBYE_DETECTED", lastUserSpeechTextRef.current);
+                  } else {
+                    isGoodbyePendingRef.current = false;
+                  }
+
+                  const guard = checkTextGuardrails(lastUserSpeechTextRef.current);
+                  if (guard) {
+                    setToolEvents((prev) => [...prev, guard]);
+                  }
+                  lastUserSpeechTextRef.current = "";
+                }
+
                 // If user speech timestamp was recorded, mark end of user speech
                 if (lastUserSpeechTimeRef.current !== null) {
                   smRef.current.onUserSpeechEnd(lastUserSpeechTimeRef.current);
@@ -691,9 +920,13 @@ export function useRealtimeAgent(options = {}) {
   /**
    * End session
    */
-  const end = useCallback(() => {
-    teardown(AGENT_STATES.ENDED);
-  }, [teardown]);
+  const end = useCallback(
+    (resolution = "RESOLVED") => {
+      callResolutionRef.current = resolution;
+      teardown(AGENT_STATES.ENDED);
+    },
+    [teardown]
+  );
 
   /**
    * Toggle or set mute
@@ -715,6 +948,20 @@ export function useRealtimeAgent(options = {}) {
       const clean = String(text || "").trim();
       if (!clean) return;
 
+      // Reset silence timer on user input
+      silenceTimerRef.current?.reset();
+      if (goodbyeEndTimerRef.current) {
+        clearTimeout(goodbyeEndTimerRef.current);
+        goodbyeEndTimerRef.current = null;
+      }
+
+      if (isGoodbyeIntent(clean)) {
+        isGoodbyePendingRef.current = true;
+        log("CallEtiquette", "GOODBYE_DETECTED", clean);
+      } else {
+        isGoodbyePendingRef.current = false;
+      }
+
       // Mark end of user speech for latency measurement
       smRef.current.onUserSpeechEnd(performance.now());
       syncState();
@@ -723,7 +970,7 @@ export function useRealtimeAgent(options = {}) {
       pendingFragmentsQueueRef.current.push({
         speaker: "user",
         fragment: clean,
-        options: { complete: true },
+        options: { complete: true, offsetMs: getCallOffsetMs() },
       });
 
       wsRef.current.send(
@@ -740,6 +987,12 @@ export function useRealtimeAgent(options = {}) {
         })
       );
       log("Client -> Server", "USER_MESSAGE", clean);
+
+      // Check text guardrails on typed/injected user message
+      const guard = checkTextGuardrails(clean);
+      if (guard) {
+        setToolEvents((prev) => [...prev, guard]);
+      }
     },
     [syncState, log]
   );
@@ -749,6 +1002,14 @@ export function useRealtimeAgent(options = {}) {
    */
   const interrupt = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+    // Reset silence timer on barge-in
+    silenceTimerRef.current?.reset();
+    if (goodbyeEndTimerRef.current) {
+      clearTimeout(goodbyeEndTimerRef.current);
+      goodbyeEndTimerRef.current = null;
+      isGoodbyePendingRef.current = false;
+    }
 
     audioGenRef.current++;
     if (playerRef.current) {
@@ -768,17 +1029,40 @@ export function useRealtimeAgent(options = {}) {
       options: { complete: true, interrupted: true },
     });
 
+    const bargeEvent = createDecisionEvent({
+      kind: "BARGE_IN",
+      title: "Barge-in Interruption Detected",
+      detail: "User triggered barge-in interrupt; audio playback cut off immediately.",
+      ruleCited: "BARGE_IN: START_OF_ACTIVITY_INTERRUPTS",
+      status: "active",
+      isBargeIn: true,
+    });
+    setToolEvents((prev) => [...prev, bargeEvent]);
+
     log("BargeIn", "INTERRUPT_TRIGGER", "User triggered barge-in.");
   }, [syncState, log]);
+
+  const detectedIntent = useMemo(() => {
+    return classifyIntent(transcript, toolEvents);
+  }, [transcript, toolEvents]);
+
+  const clearToolEvents = useCallback(() => {
+    setToolEvents([]);
+  }, []);
 
   return {
     state,
     transcript,
     toolEvents,
+    detectedIntent,
+    clearToolEvents,
     latency,
     micAnalyser,
     agentAnalyser,
     isMuted,
+    isUnclearAudio,
+    callResolution: callResolutionRef.current,
+    recording,
     error,
     start,
     end,

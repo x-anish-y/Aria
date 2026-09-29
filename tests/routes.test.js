@@ -59,14 +59,22 @@ describe('API Route Handlers', () => {
     it('applies session overrides to GET /api/orders and resets on POST /api/reset', async () => {
       const sessionId = 'route-isolation-session';
 
-      // 1. Cancel ORD-103 via tool route
-      const cancelReq = new Request('http://localhost:3000/api/tools/requestCancellation', {
+      // 1. Cancel ORD-103 via tool route (two-phase)
+      const p1Req = new Request('http://localhost:3000/api/tools/requestCancellation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, orderId: 'ORD-103' }),
       });
-      const cancelParams = Promise.resolve({ name: 'requestCancellation' });
-      await toolsHandler(cancelReq, { params: cancelParams });
+      const p1Res = await toolsHandler(p1Req, { params: Promise.resolve({ name: 'requestCancellation' }) });
+      const p1Data = await p1Res.json();
+      expect(p1Data.result.confirmToken).toBeDefined();
+
+      const cancelReq = new Request('http://localhost:3000/api/tools/requestCancellation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, orderId: 'ORD-103', confirmToken: p1Data.result.confirmToken }),
+      });
+      await toolsHandler(cancelReq, { params: Promise.resolve({ name: 'requestCancellation' }) });
 
       // 2. Fetch orders for this session
       const getReq = new Request(`http://localhost:3000/api/orders?sessionId=${sessionId}`);

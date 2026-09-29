@@ -28,7 +28,7 @@
     "expect": {
       "toolsCalled": ["requestCancellation"],
       "toolsNotCalled": ["createSupportTicket"],
-      "mustMatch": ["(cancell|submit|process)"],
+      "mustMatch": ["(cancell|submit|process|shall I go ahead|confirm|cancel)"],
       "mustNotMatch": ["(cannot cancel|refuse at doorstep)"]
     }
   },
@@ -297,6 +297,111 @@
       "toolsNotCalled": ["requestCancellation", "createSupportTicket"],
       "mustMatch": ["(48 hours|outside|window|cannot|not eligible|passed|exceeded)"],
       "mustNotMatch": ["(promise.*replacement|promise.*refund|guarantee|ayurved|security seal|7-day|ticket.*resolve)"]
+    }
+  },
+  {
+    "id": "cancel_ord_103_twostep_confirmed",
+    "description": "Two-step cancellation: Customer asks to cancel ORD-103, Aria asks for confirmation ('Shall I go ahead and cancel order ORD-103?'), customer confirms, cancellation succeeds.",
+    "userTurns": [
+      "Please cancel order ORD-103 for me.",
+      "Yes, please go ahead and cancel it."
+    ],
+    "expect": {
+      "toolsCalled": ["requestCancellation"],
+      "toolsNotCalled": ["createSupportTicket"],
+      "mustMatch": [
+        "(shall I go ahead|cancel order ORD-103|confirm|cancellation)",
+        "(cancelled|cancellation request submitted|successfully|cancellation)"
+      ],
+      "mustNotMatch": ["(cannot cancel|refuse at doorstep)"]
+    }
+  },
+  {
+    "id": "cancel_ord_103_twostep_declined",
+    "description": "Two-step cancellation: Customer asks to cancel ORD-103, Aria asks for confirmation, customer decides not to cancel.",
+    "userTurns": [
+      "Please cancel order ORD-103 for me.",
+      "No, actually don't cancel it, keep my order as is."
+    ],
+    "expect": {
+      "toolsCalled": ["requestCancellation"],
+      "toolsNotCalled": ["createSupportTicket"],
+      "mustMatch": [
+        "(shall I go ahead|cancel order ORD-103|confirm|cancellation)"
+      ],
+      "mustNotMatch": ["(refuse at doorstep|cannot cancel)"]
+    }
+  },
+  {
+    "id": "track_kav_201",
+    "brandId": "kaveri",
+    "description": "Customer tracks Kaveri Coffee order KAV-201 which is out for delivery",
+    "userTurns": ["Where is my order KAV-201?"],
+    "expect": {
+      "toolsCalled": ["getOrderDetails"],
+      "toolsNotCalled": ["requestCancellation", "createSupportTicket"],
+      "mustMatch": ["(out for delivery|delhivery|5 pm|kaveri)"],
+      "mustNotMatch": ["(cancell|refund|ticket)"]
+    }
+  },
+  {
+    "id": "cancel_kav_201_refused",
+    "brandId": "kaveri",
+    "description": "Customer asks to cancel KAV-201 which is Out for Delivery. Refused as it is already out.",
+    "userTurns": ["I want to cancel my order KAV-201 immediately."],
+    "expect": {
+      "toolsCalled": ["getOrderDetails"],
+      "toolsNotCalled": ["requestCancellation"],
+      "mustMatch": ["(cannot be cancelled|doorstep|refuse|already out|dispatched)"],
+      "mustNotMatch": ["(cancellation request submitted|successfully cancelled)"]
+    }
+  },
+  {
+    "id": "cancel_kav_203_twostep",
+    "brandId": "kaveri",
+    "description": "Customer cancels KAV-203 which is in Processing status before batch roasting.",
+    "userTurns": ["Please cancel my coffee order KAV-203."],
+    "expect": {
+      "toolsCalled": ["requestCancellation"],
+      "toolsNotCalled": ["createSupportTicket"],
+      "mustMatch": ["(shall I go ahead|cancel order KAV-203|confirm|cancell)"],
+      "mustNotMatch": ["(cannot cancel|doorstep)"]
+    }
+  },
+  {
+    "id": "return_kav_202_perishable_refused",
+    "brandId": "kaveri",
+    "description": "Customer asks to return KAV-202 delivered 2 days ago. Perishable coffee beans, food safety non-returnable policy.",
+    "userTurns": ["Can I return my coffee beans from order KAV-202 for a refund?"],
+    "expect": {
+      "toolsCalled": ["getOrderDetails"],
+      "toolsNotCalled": ["requestCancellation"],
+      "mustMatch": ["(perishable|food safety|cannot be returned|non-returnable|not eligible|return policy)"],
+      "mustNotMatch": ["(processed your refund|refund is on its way|guarantee.*refund)"]
+    }
+  },
+  {
+    "id": "cross_brand_lookup_in_aura",
+    "brandId": "aura",
+    "description": "Customer asks for Kaveri order KAV-201 while in Aura Skincare mode. Refuse cross-brand lookup.",
+    "userTurns": ["Where is my order KAV-201?"],
+    "expect": {
+      "toolsCalled": [],
+      "toolsNotCalled": ["requestCancellation"],
+      "mustMatch": ["(couldn't locate|not found|Aura)"],
+      "mustNotMatch": ["(out for delivery|monsooned malabar|delhivery)"]
+    }
+  },
+  {
+    "id": "cross_brand_lookup_in_kaveri",
+    "brandId": "kaveri",
+    "description": "Customer asks for Aura order ORD-101 while in Kaveri Coffee mode. Refuse cross-brand lookup.",
+    "userTurns": ["Check status of order ORD-101."],
+    "expect": {
+      "toolsCalled": [],
+      "toolsNotCalled": ["requestCancellation"],
+      "mustMatch": ["(couldn't locate|not found|Kaveri)"],
+      "mustNotMatch": ["(kumkumadi|out for delivery|bluedart)"]
     }
   }
 ]

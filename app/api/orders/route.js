@@ -11,14 +11,16 @@ export async function GET(request) {
   try {
     const url = new URL(request.url);
     const sessionId = url.searchParams.get("sessionId") || "default-session";
+    const brandId = url.searchParams.get("brandId") || url.searchParams.get("brand") || null;
 
-    const { orders, degraded } = await getOrdersForSession(sessionId);
+    const { orders, degraded } = await getOrdersForSession(sessionId, brandId);
 
     return Response.json(
       {
         ok: true,
         orders,
         sessionId,
+        brandId,
         degraded,
       },
       { status: 200 }

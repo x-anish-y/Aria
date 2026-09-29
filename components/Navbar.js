@@ -14,18 +14,28 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
-import { Sparkles, PhoneCall, BarChart3, History, Volume2, VolumeX } from "lucide-react";
+import { Sparkles, PhoneCall, BarChart3, History, Volume2, VolumeX, Brain } from "lucide-react";
 import { Badge, ThemeToggle, Tooltip } from "@/components/ui";
 import { tapScale, hoverLift, springSnap } from "@/lib/motion";
-import {
-  isSoundCuesEnabled,
-  setSoundCuesEnabled,
-  playCallStartCue,
-} from "@/lib/sound-cues";
+import { isSoundCuesEnabled, setSoundCuesEnabled, playCallStartCue } from "@/lib/sound-cues";
+import { GuidedTourProgressRing } from "@/components/GuidedTourCard";
+import { getBrand } from "@/lib/brands";
 
-export function Navbar({ mode = "realtime", onOpenHistory }) {
+export function Navbar({
+  mode = "realtime",
+  activeBrandId = "aura",
+  onSwitchBrand,
+  isInCall = false,
+  onOpenHistory,
+  onOpenBrain,
+  brainEventsCount = 0,
+  onOpenTour,
+  tourPassedCount = 0,
+  tourTotalCount = 8,
+}) {
   const pathname = usePathname();
   const [soundEnabled, setSoundEnabled] = useState(false);
+  const brand = getBrand(activeBrandId);
 
   useEffect(() => {
     setSoundEnabled(isSoundCuesEnabled());
@@ -47,25 +57,93 @@ export function Navbar({ mode = "realtime", onOpenHistory }) {
 
   return (
     <header className="flex items-center justify-between px-4 sm:px-8 py-3.5 border-b border-outline-variant/15 bg-surface/50 backdrop-blur-md sticky top-0 z-30">
-      {/* ── Brand identity ────────────────────────────────────────── */}
-      <Link href="/" className="flex items-center gap-3 group">
-        <div className="w-9 h-9 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center shadow-sm group-hover:border-primary/60 transition-colors">
-          <Sparkles className="w-5 h-5 text-primary-light" />
-        </div>
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="font-serif text-lg font-medium text-ivory tracking-tight group-hover:text-primary-light transition-colors">
-              Aria
-            </h1>
-            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-surface-high border border-outline-variant/20 text-secondary-light">
-              Botanical AI
-            </span>
+      {/* ── Brand identity & Brand Switcher ────────────────────────── */}
+      <div className="flex items-center gap-3.5">
+        <Link href="/" className="flex items-center gap-3 group">
+          <div className="w-9 h-9 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center shadow-sm group-hover:border-primary/60 transition-colors text-base">
+            {brand.id === "kaveri" ? "☕" : <Sparkles className="w-5 h-5 text-primary-light" />}
           </div>
-          <p className="text-[11px] text-on-surface-muted hidden sm:block">
-            Aura Skincare • Voice Support
-          </p>
-        </div>
-      </Link>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="font-serif text-lg font-medium text-ivory tracking-tight group-hover:text-primary-light transition-colors">
+                {brand.persona_name}
+              </h1>
+              <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-surface-high border border-outline-variant/20 text-secondary-light">
+                {brand.id === "kaveri" ? "Specialty Coffee" : "Botanical AI"}
+              </span>
+            </div>
+            <p className="text-[11px] text-on-surface-muted hidden sm:block">
+              {brand.name} • Voice Support
+            </p>
+          </div>
+        </Link>
+
+        {/* Animated Brand Switcher Pill */}
+        <Tooltip
+          side="bottom"
+          align="start"
+          content={
+            isInCall
+              ? "Brand switching is locked during an active call. Please end the call to switch brands."
+              : `Active brand: ${brand.name}. Click to switch.`
+          }
+        >
+          <div
+            role="radiogroup"
+            aria-label="Brand Selector"
+            className={`flex items-center p-0.5 rounded-full bg-surface-container/90 border border-outline-variant/25 shadow-inner transition-opacity ${
+              isInCall ? "opacity-60 cursor-not-allowed" : ""
+            }`}
+          >
+            <button
+              type="button"
+              role="radio"
+              aria-checked={activeBrandId === "aura"}
+              disabled={isInCall}
+              onClick={() => !isInCall && onSwitchBrand?.("aura")}
+              className={`relative px-2.5 py-1 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 z-10 ${
+                activeBrandId === "aura"
+                  ? "text-ivory font-semibold shadow-sm"
+                  : "text-on-surface-muted hover:text-on-surface"
+              } ${isInCall ? "cursor-not-allowed" : "cursor-pointer"}`}
+            >
+              {activeBrandId === "aura" && (
+                <motion.div
+                  layoutId="active-brand-indicator"
+                  className="absolute inset-0 rounded-full bg-surface-highest border border-primary/40 shadow-sm"
+                  transition={springSnap}
+                  style={{ zIndex: -1 }}
+                />
+              )}
+              <span className="text-xs">✨</span>
+              <span className="hidden sm:inline">Aura</span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={activeBrandId === "kaveri"}
+              disabled={isInCall}
+              onClick={() => !isInCall && onSwitchBrand?.("kaveri")}
+              className={`relative px-2.5 py-1 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 z-10 ${
+                activeBrandId === "kaveri"
+                  ? "text-ivory font-semibold shadow-sm"
+                  : "text-on-surface-muted hover:text-on-surface"
+              } ${isInCall ? "cursor-not-allowed" : "cursor-pointer"}`}
+            >
+              {activeBrandId === "kaveri" && (
+                <motion.div
+                  layoutId="active-brand-indicator"
+                  className="absolute inset-0 rounded-full bg-surface-highest border border-primary/40 shadow-sm"
+                  transition={springSnap}
+                  style={{ zIndex: -1 }}
+                />
+              )}
+              <span className="text-xs">☕</span>
+              <span className="hidden sm:inline">Kaveri</span>
+            </button>
+          </div>
+        </Tooltip>
+      </div>
 
       {/* ── Center Nav Switcher with Animated Pill Indicator ──────── */}
       <nav
@@ -142,6 +220,57 @@ export function Navbar({ mode = "realtime", onOpenHistory }) {
             )}
           </motion.button>
         </Tooltip>
+
+        {onOpenTour && (
+          <Tooltip
+            side="bottom"
+            align="center"
+            content={`Guided Test Checklist: ${tourPassedCount}/${tourTotalCount} scenarios passed`}
+          >
+            <motion.button
+              whileTap={tapScale}
+              whileHover={hoverLift}
+              onClick={onOpenTour}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors shadow-sm ${
+                tourPassedCount === tourTotalCount && tourTotalCount > 0
+                  ? "bg-secondary/20 text-secondary-light border-secondary/40"
+                  : "bg-surface-container text-on-surface border-outline-variant/30 hover:border-primary/40 hover:bg-surface-high"
+              }`}
+              title="Guided Test Checklist"
+            >
+              <GuidedTourProgressRing
+                passedCount={tourPassedCount}
+                totalCount={tourTotalCount}
+                size={18}
+                strokeWidth={2.5}
+              />
+              <span className="hidden md:inline">Tour</span>
+              <span className="text-[11px] font-mono font-bold">
+                {tourPassedCount}/{tourTotalCount}
+              </span>
+            </motion.button>
+          </Tooltip>
+        )}
+
+        {onOpenBrain && (
+          <Tooltip side="bottom" align="center" content="Live Agent Brain reasoning & policy verdicts">
+            <motion.button
+              whileTap={tapScale}
+              whileHover={hoverLift}
+              onClick={onOpenBrain}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-on-surface bg-surface-container border border-primary/30 hover:border-primary/60 hover:bg-surface-high transition-colors shadow-sm"
+              title="Open Agent Brain reasoning drawer"
+            >
+              <Brain className="w-3.5 h-3.5 text-primary animate-pulse" />
+              <span className="hidden md:inline">Agent Brain</span>
+              {brainEventsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold bg-primary text-black">
+                  {brainEventsCount}
+                </span>
+              )}
+            </motion.button>
+          </Tooltip>
+        )}
 
         {onOpenHistory && (
           <Tooltip side="bottom" align="center" content="View previous call records & evaluations">

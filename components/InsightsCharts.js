@@ -24,6 +24,7 @@ import {
   CheckCircle2,
   ShieldAlert,
   PhoneCall,
+  Award,
 } from "lucide-react";
 import { springGentle, springSnap } from "@/lib/motion";
 
@@ -464,6 +465,150 @@ export function LatencyHistogramChart({ data = [] }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ── 5. QA Quality Score Trend Chart (Task 17) ──────────────────────────────
+export function QATrendLineChart({ data = [] }) {
+  const [hoveredPoint, setHoveredPoint] = useState(null);
+
+  if (!data || data.length === 0) return null;
+
+  const width = 500;
+  const height = 180;
+  const paddingX = 40;
+  const paddingY = 25;
+
+  const maxScore = 5.0;
+  const minScore = 1.0;
+
+  // Generate points
+  const points = data.map((d, index) => {
+    const x = paddingX + (index / Math.max(1, data.length - 1)) * (width - paddingX * 2);
+    const score = typeof d.avgScore === "number" ? d.avgScore : 4.8;
+    const y =
+      height -
+      paddingY -
+      ((score - minScore) / (maxScore - minScore)) * (height - paddingY * 2);
+    return { ...d, x, y, score };
+  });
+
+  const createBezierPath = (pts) => {
+    if (pts.length === 0) return "";
+    let path = `M ${pts[0].x},${pts[0].y}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i];
+      const p1 = pts[i + 1];
+      const cpX = (p0.x + p1.x) / 2;
+      path += ` C ${cpX},${p0.y} ${cpX},${p1.y} ${p1.x},${p1.y}`;
+    }
+    return path;
+  };
+
+  const linePath = createBezierPath(points);
+  const areaPath = `${linePath} L ${points[points.length - 1].x},${height - paddingY} L ${points[0].x},${height - paddingY} Z`;
+
+  return (
+    <div className="p-6 rounded-3xl bg-surface-container/60 border border-outline-variant/15 backdrop-blur-xl shadow-lg flex flex-col justify-between">
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h4 className="font-mono text-xs uppercase tracking-wider text-ivory font-semibold">
+            QA Quality Score Trend
+          </h4>
+          <p className="text-[11px] text-on-surface-muted">
+            Daily composite QA evaluation across voice sessions (1.0 to 5.0)
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 font-mono text-xs text-emerald-400">
+          <Award className="w-3.5 h-3.5" />
+          <span>Goal: &ge;4.5 / 5.0</span>
+        </div>
+      </div>
+
+      <div className="relative w-full pt-4">
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto overflow-visible">
+          <defs>
+            <linearGradient id="qaAreaGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#10b981" stopOpacity="0.35" />
+              <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
+            </linearGradient>
+            <linearGradient id="qaLineGradient" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#10b981" />
+              <stop offset="50%" stopColor="#34d399" />
+              <stop offset="100%" stopColor="#f2ca50" />
+            </linearGradient>
+          </defs>
+
+          {/* Grid lines */}
+          <line x1={paddingX} y1={paddingY} x2={width - paddingX} y2={paddingY} stroke="rgba(255,255,255,0.07)" strokeDasharray="3 3" />
+          <line x1={paddingX} y1={height / 2} x2={width - paddingX} y2={height / 2} stroke="rgba(255,255,255,0.07)" strokeDasharray="3 3" />
+          <line x1={paddingX} y1={height - paddingY} x2={width - paddingX} y2={height - paddingY} stroke="rgba(255,255,255,0.12)" />
+
+          {/* Fill Area */}
+          <path d={areaPath} fill="url(#qaAreaGradient)" />
+
+          {/* Stroke Line */}
+          <motion.path
+            d={linePath}
+            fill="none"
+            stroke="url(#qaLineGradient)"
+            strokeWidth="3"
+            strokeLinecap="round"
+            initial={{ pathLength: 0 }}
+            animate={{ pathLength: 1 }}
+            transition={{ duration: 1.2, ease: "easeOut" }}
+          />
+
+          {/* Interactive points */}
+          {points.map((p, idx) => (
+            <g key={idx} className="cursor-pointer">
+              <circle
+                cx={p.x}
+                cy={p.y}
+                r="4.5"
+                fill="#0f172a"
+                stroke="#10b981"
+                strokeWidth="2.5"
+                className="transition-transform duration-200 hover:scale-150"
+                onMouseEnter={() => setHoveredPoint(p)}
+                onMouseLeave={() => setHoveredPoint(null)}
+              />
+            </g>
+          ))}
+        </svg>
+
+        {/* X-axis labels */}
+        <div className="flex justify-between text-[10px] font-mono text-on-surface-muted mt-2 px-6">
+          {data.map((d, i) => (
+            <span key={i} className="text-center">
+              {d.day}
+            </span>
+          ))}
+        </div>
+
+        {/* Tooltip */}
+        <AnimatePresence>
+          {hoveredPoint && (
+            <motion.div
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 5 }}
+              className="absolute pointer-events-none p-2 rounded-xl bg-surface-highest/95 border border-outline-variant/30 backdrop-blur-md shadow-xl text-center transform -translate-x-1/2 -top-10"
+              style={{
+                left: `${(hoveredPoint.x / width) * 100}%`,
+              }}
+            >
+              <div className="text-[10px] font-mono text-emerald-400 font-bold">
+                {hoveredPoint.score?.toFixed(1)} / 5.0 QA Rating
+              </div>
+              <div className="text-[9px] text-on-surface-muted font-mono">
+                {hoveredPoint.date} • {hoveredPoint.count} calls
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

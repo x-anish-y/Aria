@@ -32,11 +32,37 @@ function loadEnvLocal() {
   }
 }
 
+import { DEFAULT_AURA_POLICIES, KAVERI_COFFEE_POLICIES } from '../lib/brands.js';
+
 loadEnvLocal();
+
+const seedBrands = [
+  {
+    id: 'aura',
+    name: 'Aura Skincare',
+    tagline: 'Clean, conscious skincare crafted from Ayurvedic botanicals',
+    theme: { primary: '#f2ca50', accent: '#e5b838', font: 'var(--font-geist-sans)' },
+    persona_name: 'Aria',
+    voice: 'Aoede',
+    policies: DEFAULT_AURA_POLICIES,
+    orders_prefix: 'ORD-',
+  },
+  {
+    id: 'kaveri',
+    name: 'Kaveri Coffee Roasters',
+    tagline: 'Artisanal shade-grown specialty coffee freshly roasted in Chikmagalur',
+    theme: { primary: '#ea580c', accent: '#c2410c', font: 'var(--font-geist-sans)' },
+    persona_name: 'Tara',
+    voice: 'Puck',
+    policies: KAVERI_COFFEE_POLICIES,
+    orders_prefix: 'KAV-',
+  },
+];
 
 const seedOrders = [
   {
     order_id: 'ORD-101',
+    brand_id: 'aura',
     customer_name: 'Priya Sharma',
     product: 'Vitamin C Serum (30ml)',
     value_inr: 699,
@@ -50,6 +76,7 @@ const seedOrders = [
   },
   {
     order_id: 'ORD-102',
+    brand_id: 'aura',
     customer_name: 'Rahul Verma',
     product: 'Hydrating Sunscreen SPF 50',
     value_inr: 499,
@@ -63,6 +90,7 @@ const seedOrders = [
   },
   {
     order_id: 'ORD-103',
+    brand_id: 'aura',
     customer_name: 'Ananya Patel',
     product: 'Green Tea Face Wash + Toner',
     value_inr: 850,
@@ -73,6 +101,48 @@ const seedOrders = [
     placed_hours_ago: 3,
     expected_delivery: null,
     notes: 'Eligible for cancellation',
+  },
+  {
+    order_id: 'KAV-201',
+    brand_id: 'kaveri',
+    customer_name: 'Siddharth Rao',
+    product: 'Monsooned Malabar AAA (Whole Bean, 500g)',
+    value_inr: 650,
+    status: 'Out for Delivery',
+    courier: 'BlueDart Express',
+    tracking_id: 'BD-KAV-8812',
+    delivered_days_ago: null,
+    placed_hours_ago: null,
+    expected_delivery: 'Expected by 5 PM today',
+    notes: 'Fragile fresh roast packaging',
+  },
+  {
+    order_id: 'KAV-202',
+    brand_id: 'kaveri',
+    customer_name: 'Divya Krishnan',
+    product: 'Estate Peaberry Dark Roast (French Press Grind, 250g)',
+    value_inr: 420,
+    status: 'Delivered',
+    courier: 'Delhivery',
+    tracking_id: 'DL-KAV-3301',
+    delivered_days_ago: 3,
+    placed_hours_ago: null,
+    expected_delivery: null,
+    notes: 'Delivered 3 days ago. Fresh roast non-returnable food consumable',
+  },
+  {
+    order_id: 'KAV-203',
+    brand_id: 'kaveri',
+    customer_name: 'Arjun Nair',
+    product: 'Attikan Estate Micro-lot (Aeropress Grind, 500g)',
+    value_inr: 840,
+    status: 'Processing',
+    courier: null,
+    tracking_id: null,
+    delivered_days_ago: null,
+    placed_hours_ago: 1,
+    expected_delivery: null,
+    notes: 'Eligible for cancellation before batch roasting',
   },
 ];
 
@@ -89,10 +159,47 @@ async function setupDatabase() {
   console.log('🚀 Initializing database schema on Neon...');
   const sql = neon(url);
 
-  // 1. Create tables
+  // 1. Create brands table
+  await sql`
+    CREATE TABLE IF NOT EXISTS brands (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      tagline TEXT NOT NULL,
+      theme JSONB NOT NULL,
+      persona_name TEXT NOT NULL,
+      voice TEXT NOT NULL,
+      policies JSONB NOT NULL,
+      orders_prefix TEXT NOT NULL
+    );
+  `;
+
+  // 2. Seed brands immediately so foreign keys can resolve
+  console.log('🌱 Seeding brands idempotently...');
+  for (const b of seedBrands) {
+    await sql`
+      INSERT INTO brands (
+        id, name, tagline, theme, persona_name, voice, policies, orders_prefix
+      ) VALUES (
+        ${b.id}, ${b.name}, ${b.tagline}, ${JSON.stringify(b.theme)}::jsonb,
+        ${b.persona_name}, ${b.voice}, ${JSON.stringify(b.policies)}::jsonb, ${b.orders_prefix}
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        tagline = EXCLUDED.tagline,
+        theme = EXCLUDED.theme,
+        persona_name = EXCLUDED.persona_name,
+        voice = EXCLUDED.voice,
+        policies = EXCLUDED.policies,
+        orders_prefix = EXCLUDED.orders_prefix;
+    `;
+    console.log(`   - Seeded brand: ${b.name} (${b.id})`);
+  }
+
+  // 3. Create remaining tables
   await sql`
     CREATE TABLE IF NOT EXISTS orders (
       order_id TEXT PRIMARY KEY,
+      brand_id TEXT REFERENCES brands(id) DEFAULT 'aura',
       customer_name TEXT NOT NULL,
       product TEXT NOT NULL,
       value_inr INT NOT NULL,
@@ -104,6 +211,11 @@ async function setupDatabase() {
       expected_delivery TEXT,
       notes TEXT
     );
+  `;
+
+  // Ensure brand_id column exists if orders table was created prior
+  await sql`
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS brand_id TEXT REFERENCES brands(id) DEFAULT 'aura';
   `;
 
   await sql`
@@ -150,20 +262,32 @@ async function setupDatabase() {
     );
   `;
 
+  await sql`
+    CREATE TABLE IF NOT EXISTS cancel_confirmations (
+      session_id TEXT NOT NULL,
+      order_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL PRIMARY KEY,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
   console.log('✅ Tables created / verified successfully.');
 
-  // 2. Seed orders idempotently
-  console.log('🌱 Seeding 3 orders idempotently...');
+  // 3. Seed orders idempotently
+  console.log(`🌱 Seeding ${seedOrders.length} orders idempotently...`);
   for (const o of seedOrders) {
     await sql`
       INSERT INTO orders (
-        order_id, customer_name, product, value_inr, status,
+        order_id, brand_id, customer_name, product, value_inr, status,
         courier, tracking_id, delivered_days_ago, placed_hours_ago, expected_delivery, notes
       ) VALUES (
-        ${o.order_id}, ${o.customer_name}, ${o.product}, ${o.value_inr}, ${o.status},
+        ${o.order_id}, ${o.brand_id}, ${o.customer_name}, ${o.product}, ${o.value_inr}, ${o.status},
         ${o.courier}, ${o.tracking_id}, ${o.delivered_days_ago}, ${o.placed_hours_ago}, ${o.expected_delivery}, ${o.notes}
       )
       ON CONFLICT (order_id) DO UPDATE SET
+        brand_id = EXCLUDED.brand_id,
         customer_name = EXCLUDED.customer_name,
         product = EXCLUDED.product,
         value_inr = EXCLUDED.value_inr,
@@ -175,7 +299,7 @@ async function setupDatabase() {
         expected_delivery = EXCLUDED.expected_delivery,
         notes = EXCLUDED.notes;
     `;
-    console.log(`   - Seeded ${o.order_id}: ${o.customer_name} (${o.status})`);
+    console.log(`   - Seeded ${o.order_id} [${o.brand_id}]: ${o.customer_name} (${o.status})`);
   }
 
   console.log('🎉 Database setup and seeding complete!\n');
